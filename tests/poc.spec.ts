@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import jsQR from 'jsqr';
 import { PNG } from 'pngjs';
 
-const htmlPath = 'file:///workspace/parapara-qr/parapara-qr-poc.html';
+const htmlPath = pathToFileURL(path.resolve(__dirname, '..', 'parapara-qr-poc.html')).href;
 
 function decodeQrFromPng(buffer: Buffer): string {
   const png = PNG.sync.read(buffer);
