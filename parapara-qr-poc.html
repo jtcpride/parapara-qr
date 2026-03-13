@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>パラパラQR PoC Phase 1</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f4f5;
+      color: #111;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+    .app {
+      width: min(440px, 100%);
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.1);
+      padding: 24px 18px;
+      box-sizing: border-box;
+    }
+    h1 {
+      margin: 8px 0 24px;
+      text-align: center;
+      font-size: 1.5rem;
+    }
+    .stack { display: grid; gap: 12px; }
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 14px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      width: 100%;
+    }
+    .main-btn { background: #0f766e; color: #fff; }
+    .sub-btn { background: #334155; color: #fff; font-size: .95rem; }
+    .secondary { background: #e2e8f0; color: #111; }
+    .danger { background: #dc2626; color: #fff; }
+    .status {
+      min-height: 1.5em;
+      font-size: .95rem;
+      margin-top: 12px;
+      text-align: center;
+    }
+    .error { color: #b91c1c; font-weight: 700; }
+    .hidden { display: none !important; }
+    #qrContainer {
+      background: #fff;
+      padding: 12px;
+      border-radius: 8px;
+      margin: 6px auto;
+      width: fit-content;
+    }
+    #meta {
+      margin: 12px 0;
+      font-size: .85rem;
+      color: #334155;
+      line-height: 1.45;
+      text-align: center;
+    }
+    #playbackFrame {
+      width: 100%;
+      height: 90px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      margin-top: 8px;
+    }
+    .timer {
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+    }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .app > * { display: none !important; }
+      #resultScreen, #resultScreen * { display: none !important; }
+      #resultScreen.printing, #resultScreen.printing #qrContainer, #resultScreen.printing canvas {
+        display: block !important;
+      }
+      #qrContainer { margin: 0 auto !important; box-shadow: none; padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app" id="app">
+    <section id="homeScreen">
+      <h1>パラパラQR PoC</h1>
+      <div class="stack">
+        <button class="main-btn" id="fileBtn">📁 ファイル→QR生成</button>
+        <button class="sub-btn" id="recordBtn">🎙 録音→QR</button>
+      </div>
+      <p class="status" id="homeStatus" aria-live="polite"></p>
+    </section>
+
+    <section id="recordScreen" class="hidden">
+      <h1>録音中...</h1>
+      <p class="timer" id="recordTimer">1.0 秒</p>
+      <button class="secondary" id="cancelRecordBtn">← やり直し</button>
+      <p class="status" id="recordStatus" aria-live="polite"></p>
+    </section>
+
+    <section id="resultScreen" class="hidden">
+      <h1>QR 生成完了</h1>
+      <div id="qrContainer" aria-label="QRコード"></div>
+      <div id="meta"></div>
+      <div class="stack">
+        <button class="main-btn" id="testPlayBtn">▶ テスト再生</button>
+        <button class="secondary" id="printBtn">🖨 印刷</button>
+        <button class="secondary" id="retryBtn">← やり直し</button>
+      </div>
+      <iframe id="playbackFrame" class="hidden" title="テスト再生"></iframe>
+      <p class="status" id="resultStatus" aria-live="polite"></p>
+    </section>
+
+    <section id="errorScreen" class="hidden">
+      <h1>エラー</h1>
+      <p class="status error" id="errorMessage"></p>
+      <button class="secondary" id="errorRetryBtn">← やり直し</button>
+    </section>
+
+    <input id="fileInput" type="file" accept="audio/*" class="hidden" />
+  </main>
+
+  <script>
+    // qrcode-generator (MIT) by Kazuhiko Arase: https://github.com/kazuhikoarase/qrcode-generator
+    var qrcode=function(){function v(a){this.mode=c.MODE_8BIT_BYTE;this.data=a;this.parsedData=[];for(var b=0,e=this.data.length;b<e;b++){var d=[],f=this.data.charCodeAt(b);f>65536?(d[0]=240|(1835008&f)>>>18,d[1]=128|(258048&f)>>>12,d[2]=128|(4032&f)>>>6,d[3]=128|63&f):f>2048?(d[0]=224|(61440&f)>>>12,d[1]=128|(4032&f)>>>6,d[2]=128|63&f):f>128?(d[0]=192|(1984&f)>>>6,d[1]=128|63&f):d[0]=f;this.parsedData=this.parsedData.concat(d)}this.parsedData.length!=this.data.length&&(this.parsedData.unshift(191),this.parsedData.unshift(187),this.parsedData.unshift(239))}function n(a,b){this.typeNumber=a;this.errorCorrectLevel=b;this.modules=null;this.moduleCount=0;this.dataCache=null;this.dataList=[]}function t(a,b){if(void 0==a.length)throw Error(a.length+"/"+b);for(var c=0;c<a.length&&0==a[c];)c++;this.num=new Array(a.length-c+b);for(var d=0;d<a.length-c;d++)this.num[d]=a[d+c]}function q(a,b){this.totalCount=a;this.dataCount=b}var c={MODE_NUMBER:1,MODE_ALPHA_NUM:2,MODE_8BIT_BYTE:4,MODE_KANJI:8},l={L:1,M:0,Q:3,H:2},u=[[1,26,19],[1,44,34],[1,70,55],[1,100,80],[1,134,108],[2,86,68],[2,98,78],[2,121,97],[2,146,116],[2,86,68,2,87,69],[4,101,81],[2,116,92,2,117,93],[4,133,107],[3,145,115,1,146,116],[5,109,87,1,110,88],[5,122,98,1,123,99],[1,135,107,5,136,108],[5,150,120,1,151,121],[3,141,113,4,142,114],[3,135,107,5,136,108],[4,144,116,4,145,117],[2,139,111,7,140,112],[4,151,121,5,152,122],[6,147,117,4,148,118],[8,132,106,4,133,107],[10,142,114,2,143,115],[8,152,122,4,153,123],[3,147,117,10,148,118],[7,146,116,7,147,117],[5,145,115,10,146,116],[13,145,115,3,146,116],[17,145,115],[17,145,115,1,146,116],[13,145,115,6,146,116],[12,151,121,7,152,122],[6,151,121,14,152,122],[17,152,122,4,153,123],[4,152,122,18,153,123],[20,147,117,4,148,118],[19,148,118,6,149,119]],w=[[],[6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,26,46],[6,28,50],[6,30,54],[6,32,58],[6,34,62],[6,26,46,66],[6,26,48,70],[6,26,50,74],[6,30,54,78],[6,30,56,82],[6,30,58,86],[6,34,62,90],[6,28,50,72,94],[6,26,50,74,98],[6,30,54,78,102],[6,28,54,80,106],[6,32,58,84,110],[6,30,58,86,114],[6,34,62,90,118],[6,26,50,74,98,122],[6,30,54,78,102,126],[6,26,52,78,104,130],[6,30,56,82,108,134],[6,34,60,86,112,138],[6,30,58,86,114,142],[6,34,62,90,118,146],[6,30,54,78,102,126,150],[6,24,50,76,102,128,154],[6,28,54,80,106,132,158],[6,32,58,84,110,136,162],[6,26,54,82,110,138,166],[6,30,58,86,114,142,170]];
+    n.prototype={addData:function(a){a=new v(a);this.dataList.push(a);this.dataCache=null},isDark:function(a,b){if(a<0||this.moduleCount<=a||b<0||this.moduleCount<=b)throw Error(a+","+b);return this.modules[a][b]},getModuleCount:function(){return this.moduleCount},make:function(){for(var a=1;a<=40;a++)if(this.typeNumber=a,this.makeImpl(!1,this.getBestMaskPattern()),this.dataCache.length<=this.getMaxLength())return;throw Error("code length overflow.")},getBestMaskPattern:function(){for(var a=0,b=0,c=0;c<8;c++){this.makeImpl(!0,c);var d=r.getLostPoint(this);(0==c||a>d)&&(a=d,b=c)}return b},getMaxLength:function(){var a=u[this.typeNumber-1],b=0;for(i=0;i<a.length;i+=3)b+=a[i+1];return b},makeImpl:function(a,b){this.moduleCount=4*this.typeNumber+17;this.modules=new Array(this.moduleCount);for(var c=0;c<this.moduleCount;c++){this.modules[c]=new Array(this.moduleCount);for(var d=0;d<this.moduleCount;d++)this.modules[c][d]=null}this.setupPositionProbePattern(0,0);this.setupPositionProbePattern(this.moduleCount-7,0);this.setupPositionProbePattern(0,this.moduleCount-7);this.setupPositionAdjustPattern();this.setupTimingPattern();this.setupTypeInfo(a,b);this.typeNumber>=7&&this.setupTypeNumber(a);null==this.dataCache&&(this.dataCache=n.createData(this.typeNumber,this.errorCorrectLevel,this.dataList));this.mapData(this.dataCache,b)},setupPositionProbePattern:function(a,b){for(var c=-1;c<=7;c++)if(!(a+c<=-1||this.moduleCount<=a+c))for(var d=-1;d<=7;d++)b+d<=-1||this.moduleCount<=b+d||(this.modules[a+c][b+d]=0<=c&&c<=6&&(0==d||6==d)||0<=d&&d<=6&&(0==c||6==c)||2<=c&&c<=4&&2<=d&&d<=4)},getMask:function(a,b,c){switch(a){case 0:return(b+c)%2==0;case 1:return b%2==0;case 2:return c%3==0;case 3:return(b+c)%3==0;case 4:return(Math.floor(b/2)+Math.floor(c/3))%2==0;case 5:return b*c%2+b*c%3==0;case 6:return(b*c%2+b*c%3)%2==0;case 7:return(b*c%3+(b+c)%2)%2==0;default:throw Error("bad maskPattern:"+a);}},setupTimingPattern:function(){for(var a=8;a<this.moduleCount-8;a++)null==this.modules[a][6]&&(this.modules[a][6]=a%2==0),null==this.modules[6][a]&&(this.modules[6][a]=a%2==0)},setupPositionAdjustPattern:function(){for(var a=w[this.typeNumber-1],b=0;b<a.length;b++)for(var c=0;c<a.length;c++){var d=a[b],e=a[c];if(null==this.modules[d][e])for(var f=-2;f<=2;f++)for(var g=-2;g<=2;g++)this.modules[d+f][e+g]=-2==f||2==f||-2==g||2==g||0==f&&0==g}},setupTypeNumber:function(a){for(var b=r.getBCHTypeNumber(this.typeNumber),c=0;c<18;c++){var d=!a&&1==(b>>c&1);this.modules[Math.floor(c/3)][c%3+this.moduleCount-8-3]=d}for(c=0;c<18;c++)d=!a&&1==(b>>c&1),this.modules[c%3+this.moduleCount-8-3][Math.floor(c/3)]=d},setupTypeInfo:function(a,b){for(var c=this.errorCorrectLevel<<3|b,d=r.getBCHTypeInfo(c),e=0;e<15;e++){var f=!a&&1==(d>>e&1);e<6?this.modules[e][8]=f:e<8?this.modules[e+1][8]=f:this.modules[this.moduleCount-15+e][8]=f}for(e=0;e<15;e++)f=!a&&1==(d>>e&1),e<8?this.modules[8][this.moduleCount-e-1]=f:e<9?this.modules[8][15-e-1+1]=f:this.modules[8][15-e-1]=f;this.modules[this.moduleCount-8][8]=!a},mapData:function(a,b){for(var c=-1,d=this.moduleCount-1,e=7,f=0,g=this.moduleCount-1;0<g;g-=2){6==g&&g--;for(;;){for(var h=0;h<2;h++)if(null==this.modules[d][g-h]){var k=!1;f<a.length&&(k=1==(a[f]>>>e&1));this.getMask(b,d,g-h)&&(k=!k);this.modules[d][g-h]=k;e--; -1==e&&(f++,e=7)}d+=c;if(d<0||this.moduleCount<=d){d-=c;c=-c;break}}}},createBytes:function(a,b){for(var c=0,d=0,e=0,f=new Array(b),g=new Array(b),h=0;h<b;h++){var k=a[h][0],m=a[h][1]-k;c=Math.max(c,k);d=Math.max(d,m);f[h]=new Array(k);for(var p=0;p<f[h].length;p++)f[h][p]=255&a[h][2].get(p+e);e+=k;var n=r.getErrorCorrectPolynomial(m),m=a[h][2].mod(n),q=new Array(n.getLength()-1);for(p=0;p<q.length;p++){var s=p+m.getLength()-q.length;q[p]=0<=s?m.get(s):0}g[h]=q}for(p=e=h=0;p<b;p++)h+=a[p][0]+a[p][1];a=new Array(h);for(p=0;p<c;p++)for(n=0;n<b;n++)p<f[n].length&&(a[e++]=f[n][p]);for(p=0;p<d;p++)for(n=0;n<b;n++)p<g[n].length&&(a[e++]=g[n][p]);return a}};
+    n.PAD0=236;n.PAD1=17;n.createData=function(a,b,c){for(var d=q.getRSBlocks(a,b),e=new x,f=0;f<c.length;f++){var g=c[f];e.put(g.mode,4);e.put(g.getLength(),r.getLengthInBits(g.mode,a));g.write(e)}for(f=a=0;f<d.length;f++)a+=d[f].dataCount;if(e.getLengthInBits()>8*a)throw Error("code length overflow. ("+e.getLengthInBits()+">"+8*a+")");for(e.getLengthInBits()+4<=8*a&&e.put(0,4);e.getLengthInBits()%8!=0;)e.putBit(!1);for(;!(e.getLengthInBits()>=8*a);){e.put(n.PAD0,8);if(e.getLengthInBits()>=8*a)break;e.put(n.PAD1,8)}return n.createBytes(function(a,b){for(var c=0,d=0,e=0,f=new Array(b.length),g=0;g<b.length;g++){var h=b[g].dataCount,k=b[g].totalCount-h;d=Math.max(d,h);e=Math.max(e,k);f[g]=new Array(3);f[g][0]=h;f[g][1]=k;f[g][2]=new t(a.getBuffer().slice(c,c+h),0);c+=h}return f}(e,d),d.length)};
+    v.prototype={getLength:function(){return this.parsedData.length},write:function(a){for(var b=0,c=this.parsedData.length;b<c;b++)a.put(this.parsedData[b],8)}};
+    q.getRSBlocks=function(a,b){var c=u[a-1],d=[];for(a=0;a<c.length;a+=3)for(var e=c[a],f=c[a+1],g=c[a+2],h=0;h<e;h++)d.push(new q(f,g));return d};
+    var r={PATTERN_POSITION_TABLE:w,G15:1335,G18:7973,G15_MASK:21522,getBCHTypeInfo:function(a){for(var b=a<<10;r.getBCHDigit(b)-r.getBCHDigit(r.G15)>=0;)b^=r.G15<<r.getBCHDigit(b)-r.getBCHDigit(r.G15);return(a<<10|b)^r.G15_MASK},getBCHTypeNumber:function(a){for(var b=a<<12;r.getBCHDigit(b)-r.getBCHDigit(r.G18)>=0;)b^=r.G18<<r.getBCHDigit(b)-r.getBCHDigit(r.G18);return a<<12|b},getBCHDigit:function(a){for(var b=0;0!=a;)b++,a>>>=1;return b},getPatternPosition:function(a){return r.PATTERN_POSITION_TABLE[a-1]},getMaskFunction:function(a){return function(b,c){return n.prototype.getMask(a,b,c)}},getErrorCorrectPolynomial:function(a){for(var b=new t([1],0),c=0;c<a;c++)b=b.multiply(new t([1,r.gexp(c)],0));return b},getLengthInBits:function(a,b){if(1<=b&&b<10)switch(a){case c.MODE_NUMBER:return 10;case c.MODE_ALPHA_NUM:return 9;default:return 8}else if(b<27)switch(a){case c.MODE_NUMBER:return 12;case c.MODE_ALPHA_NUM:return 11;default:return 16}else switch(a){case c.MODE_NUMBER:return 14;case c.MODE_ALPHA_NUM:return 13;default:return 16}},getLostPoint:function(a){for(var b=a.getModuleCount(),c=0,d=0;d<b;d++)for(var e=0;e<b;e++){for(var f=0,g=a.isDark(d,e),h=-1;h<=1;h++)if(!(d+h<0||b<=d+h))for(var k=-1;k<=1;k++)e+k<0||b<=e+k||0==h&&0==k||g==a.isDark(d+h,e+k)&&f++;5<f&&(c+=3+f-5)}for(d=0;d<b-1;d++)for(e=0;e<b-1;e++)f=0,a.isDark(d,e)&&f++,a.isDark(d+1,e)&&f++,a.isDark(d,e+1)&&f++,a.isDark(d+1,e+1)&&f++,0!=f&&4!=f||(c+=3);for(d=0;d<b;d++)for(e=0;e<b-6;e++)a.isDark(d,e)&&!a.isDark(d,e+1)&&a.isDark(d,e+2)&&a.isDark(d,e+3)&&a.isDark(d,e+4)&&!a.isDark(d,e+5)&&a.isDark(d,e+6)&&(c+=40);for(e=0;e<b;e++)for(d=0;d<b-6;d++)a.isDark(d,e)&&!a.isDark(d+1,e)&&a.isDark(d+2,e)&&a.isDark(d+3,e)&&a.isDark(d+4,e)&&!a.isDark(d+5,e)&&a.isDark(d+6,e)&&(c+=40);for(e=d=0;e<b;e++)for(f=0;f<b;f++)a.isDark(e,f)&&d++;return c+=Math.abs(100*d/b/b-50)/5*10}};
+    r.EXP_TABLE=new Array(256);r.LOG_TABLE=new Array(256);for(var i=0;i<8;i++)r.EXP_TABLE[i]=1<<i;for(i=8;i<256;i++)r.EXP_TABLE[i]=r.EXP_TABLE[i-4]^r.EXP_TABLE[i-5]^r.EXP_TABLE[i-6]^r.EXP_TABLE[i-8];for(i=0;i<255;i++)r.LOG_TABLE[r.EXP_TABLE[i]]=i;r.glog=function(a){if(1>a)throw Error("glog("+a+")");return r.LOG_TABLE[a]};r.gexp=function(a){for(;0>a;)a+=255;for(;255<=a;)a-=255;return r.EXP_TABLE[a]};
+    t.prototype={get:function(a){return this.num[a]},getLength:function(){return this.num.length},multiply:function(a){for(var b=new Array(this.getLength()+a.getLength()-1),c=0;c<this.getLength();c++)for(var d=0;d<a.getLength();d++)b[c+d]^=r.gexp(r.glog(this.get(c))+r.glog(a.get(d)));return new t(b,0)},mod:function(a){if(this.getLength()-a.getLength()<0)return this;for(var b=r.glog(this.get(0))-r.glog(a.get(0)),c=this.num.slice(),d=0;d<a.getLength();d++)c[d]^=r.gexp(r.glog(a.get(d))+b);return(new t(c,0)).mod(a)}};
+    function x(){this.buffer=[];this.length=0}x.prototype={get:function(a){var b=Math.floor(a/8);return 1==(this.buffer[b]>>>7-a%8&1)},put:function(a,b){for(var c=0;c<b;c++)this.putBit(1==(a>>>b-c-1&1))},getLengthInBits:function(){return this.length},putBit:function(a){var b=Math.floor(this.length/8);this.buffer.length<=b&&this.buffer.push(0);a&&(this.buffer[b]|=128>>>this.length%8);this.length++},getBuffer:function(){return this.buffer}};
+    return function(a,b){var c=new n(a,l[b]);return c.addData.apply(c,Array.prototype.slice.call(arguments,2)),c}}();
+
+    const MAX_PAYLOAD_BYTES = 2953;
+    const MIME_FALLBACK = 'audio/octet-stream';
+
+    const homeScreen = document.getElementById('homeScreen');
+    const recordScreen = document.getElementById('recordScreen');
+    const resultScreen = document.getElementById('resultScreen');
+    const errorScreen = document.getElementById('errorScreen');
+
+    const fileInput = document.getElementById('fileInput');
+    const fileBtn = document.getElementById('fileBtn');
+    const recordBtn = document.getElementById('recordBtn');
+    const cancelRecordBtn = document.getElementById('cancelRecordBtn');
+
+    const homeStatus = document.getElementById('homeStatus');
+    const recordStatus = document.getElementById('recordStatus');
+    const recordTimer = document.getElementById('recordTimer');
+    const qrContainer = document.getElementById('qrContainer');
+    const meta = document.getElementById('meta');
+    const testPlayBtn = document.getElementById('testPlayBtn');
+    const printBtn = document.getElementById('printBtn');
+    const retryBtn = document.getElementById('retryBtn');
+    const resultStatus = document.getElementById('resultStatus');
+    const playbackFrame = document.getElementById('playbackFrame');
+    const errorMessage = document.getElementById('errorMessage');
+    const errorRetryBtn = document.getElementById('errorRetryBtn');
+
+    let currentPayload = '';
+
+    const show = (section) => {
+      [homeScreen, recordScreen, resultScreen, errorScreen].forEach((el) => el.classList.add('hidden'));
+      section.classList.remove('hidden');
+    };
+
+    function bytesToBase64(uint8) {
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < uint8.length; i += chunk) {
+        binary += String.fromCharCode(...uint8.subarray(i, i + chunk));
+      }
+      return btoa(binary);
+    }
+
+    function utf8ToBase64(str) {
+      const bytes = new TextEncoder().encode(str);
+      return bytesToBase64(bytes);
+    }
+
+    function inferMime(file, isRecording) {
+      if (isRecording) return 'audio/webm';
+      return file?.type && file.type.trim() ? file.type : MIME_FALLBACK;
+    }
+
+    function buildPayload(audioBytes, mimeType) {
+      const audioB64 = bytesToBase64(audioBytes);
+      const html = `<audio controls autoplay src="data:${mimeType};base64,${audioB64}"></audio>`;
+      const outerB64 = utf8ToBase64(html);
+      const payload = `data:text/html;base64,${outerB64}`;
+      return { payload, audioB64, html };
+    }
+
+    function drawQr(payload) {
+      qrContainer.innerHTML = '';
+      const qr = qrcode(0, 'L', payload);
+      qr.make();
+      const moduleCount = qr.getModuleCount();
+      const cell = 4;
+      const margin = 8;
+      const size = (moduleCount + margin * 2) * cell;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, size, size);
+      ctx.fillStyle = '#000';
+      for (let r = 0; r < moduleCount; r++) {
+        for (let c = 0; c < moduleCount; c++) {
+          if (qr.isDark(r, c)) {
+            ctx.fillRect((c + margin) * cell, (r + margin) * cell, cell, cell);
+          }
+        }
+      }
+      qrContainer.appendChild(canvas);
+      return qr;
+    }
+
+    function showError(msg) {
+      errorMessage.textContent = msg;
+      show(errorScreen);
+    }
+
+    async function processAudioBytes(audioBytes, mimeType) {
+      const { payload } = buildPayload(audioBytes, mimeType);
+      if (payload.length > MAX_PAYLOAD_BYTES) {
+        showError(`ファイルが大きすぎます（${audioBytes.length} bytes / 上限 約1,600 bytes）`);
+        return;
+      }
+      const qr = drawQr(payload);
+      currentPayload = payload;
+      playbackFrame.classList.add('hidden');
+      playbackFrame.removeAttribute('src');
+      meta.innerHTML = [
+        `データ: ${audioBytes.length.toLocaleString()} B`,
+        `QR Version: ${qr.typeNumber} (L)`,
+        `ペイロード: ${payload.length.toLocaleString()} B`
+      ].join('<br>');
+      resultStatus.textContent = '';
+      show(resultScreen);
+    }
+
+    async function handleFile(file) {
+      if (!file) return;
+      homeStatus.textContent = '処理中...';
+      try {
+        const arr = new Uint8Array(await file.arrayBuffer());
+        await processAudioBytes(arr, inferMime(file, false));
+      } catch (err) {
+        showError('ファイルの読み込みに失敗しました');
+      } finally {
+        homeStatus.textContent = '';
+      }
+    }
+
+    function createRecorder(stream) {
+      const supports = typeof MediaRecorder.isTypeSupported === 'function';
+      const configs = [
+        { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 8000 },
+        { mimeType: 'audio/webm', audioBitsPerSecond: 8000 },
+        { audioBitsPerSecond: 8000 },
+        {}
+      ];
+
+      let lastError;
+      for (const cfg of configs) {
+        try {
+          if (cfg.mimeType && supports && !MediaRecorder.isTypeSupported(cfg.mimeType)) {
+            continue;
+          }
+          return new MediaRecorder(stream, cfg);
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      throw lastError || new Error('MediaRecorder unavailable');
+    }
+
+    async function startRecording() {
+      if (!window.isSecureContext) {
+        showError('録音は https または localhost で開いてください');
+        return;
+      }
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+        showError('この端末は非対応です');
+        return;
+      }
+
+      show(recordScreen);
+      recordStatus.textContent = '';
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
+      } catch (err) {
+        showError('マイクの利用が許可されませんでした');
+        return;
+      }
+
+      try {
+        const chunks = [];
+        const rec = createRecorder(stream);
+        rec.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+
+        let remain = 10;
+        recordTimer.textContent = '1.0 秒';
+        const t = setInterval(() => {
+          remain -= 1;
+          recordTimer.textContent = `${Math.max(0, remain / 10).toFixed(1)} 秒`;
+        }, 100);
+
+        const stopPromise = new Promise((resolve, reject) => {
+          rec.onerror = () => reject(new Error('recording error'));
+          rec.onstop = resolve;
+        });
+
+        rec.start(250);
+        setTimeout(() => {
+          try {
+            if (rec.state === 'recording' && typeof rec.requestData === 'function') {
+              rec.requestData();
+            }
+          } catch (err) {
+            // ignore
+          }
+          setTimeout(() => rec.state !== 'inactive' && rec.stop(), 150);
+        }, 1000);
+        await stopPromise;
+        clearInterval(t);
+
+        if (!chunks.length) {
+          throw new Error('no audio chunks');
+        }
+
+        const outType = rec.mimeType && rec.mimeType.trim() ? rec.mimeType : 'audio/webm';
+        const blob = new Blob(chunks, { type: outType });
+        const arr = new Uint8Array(await blob.arrayBuffer());
+        await processAudioBytes(arr, outType);
+      } catch (err) {
+        showError('録音に失敗しました（Edgeでは localhost で開く/マイク許可を再設定してください）');
+      } finally {
+        stream.getTracks().forEach((tr) => tr.stop());
+      }
+    }
+
+    fileBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => handleFile(e.target.files?.[0]));
+    recordBtn.addEventListener('click', startRecording);
+    cancelRecordBtn.addEventListener('click', () => show(homeScreen));
+    retryBtn.addEventListener('click', () => show(homeScreen));
+    errorRetryBtn.addEventListener('click', () => show(homeScreen));
+
+    testPlayBtn.addEventListener('click', () => {
+      if (!currentPayload) return;
+      playbackFrame.src = currentPayload;
+      playbackFrame.classList.remove('hidden');
+      resultStatus.textContent = 'テスト再生を表示しました';
+    });
+
+    printBtn.addEventListener('click', () => {
+      resultScreen.classList.add('printing');
+      window.print();
+      setTimeout(() => resultScreen.classList.remove('printing'), 100);
+    });
+  </script>
+</body>
+</html>

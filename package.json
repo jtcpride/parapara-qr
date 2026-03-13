@@ -1,0 +1,13 @@
+{
+  "name": "parapara-qr-poc",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "test": "playwright test tests/poc.spec.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "jsqr": "^1.4.0",
+    "pngjs": "^7.0.0"
+  }
+}
