@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>パラパラQR Decoder Phase 2a</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f4f5;
+      color: #111;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+    .app {
+      width: min(560px, 100%);
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.1);
+      padding: 24px 18px;
+      box-sizing: border-box;
+    }
+    h1 {
+      margin: 8px 0 20px;
+      text-align: center;
+      font-size: 1.5rem;
+    }
+    .stack { display: grid; gap: 12px; }
+    button, textarea, input {
+      width: 100%;
+      box-sizing: border-box;
+    }
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 14px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .main-btn { background: #0f766e; color: #fff; }
+    .secondary { background: #e2e8f0; color: #111; }
+    .status {
+      min-height: 1.5em;
+      font-size: .95rem;
+      margin-top: 12px;
+      text-align: center;
+    }
+    .error { color: #b91c1c; font-weight: 700; }
+    .hidden { display: none !important; }
+    video, iframe, audio {
+      width: 100%;
+      margin-top: 8px;
+      border-radius: 12px;
+      background: #000;
+    }
+    video { aspect-ratio: 3 / 4; object-fit: cover; }
+    iframe { min-height: 120px; border: 1px solid #cbd5e1; background: #fff; }
+    textarea {
+      min-height: 120px;
+      border-radius: 12px;
+      border: 1px solid #cbd5e1;
+      padding: 12px;
+      font: inherit;
+      resize: vertical;
+    }
+    .note {
+      font-size: .88rem;
+      color: #475569;
+      line-height: 1.5;
+    }
+    .link-btn {
+      display: inline-block;
+      text-align: center;
+      text-decoration: none;
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: #334155;
+      color: #fff;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <h1>パラパラQR Decoder</h1>
+    <div class="stack">
+      <button class="main-btn" id="scanBtn">QRを読んで元の音声・動画を復元する</button>
+      <button class="secondary hidden" id="stopBtn">カメラを閉じる</button>
+      <video id="cameraView" class="hidden" playsinline muted autoplay></video>
+      <p class="status" id="status" aria-live="polite"></p>
+      <p class="note">
+        標準カメラで直接開けない場合でも、このページからカメラを起動して自己完結QRを読み取れます。
+        読み取りに失敗する環境向けに、下の欄へ payload を貼り付けて復元することもできます。
+      </p>
+      <textarea id="payloadInput" placeholder="data:text/html;base64,... をここに貼り付け"></textarea>
+      <button class="secondary" id="restoreBtn">貼り付けたpayloadを復元する</button>
+      <audio id="audioPlayer" class="hidden" controls></audio>
+      <video id="videoPlayer" class="hidden" controls playsinline></video>
+      <iframe id="previewFrame" class="hidden" title="自己完結QRプレビュー"></iframe>
+      <a id="downloadLink" class="link-btn hidden" download>復元したメディアをダウンロード</a>
+    </div>
+  </main>
+
+  <script>
+    const scanBtn = document.getElementById('scanBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const restoreBtn = document.getElementById('restoreBtn');
+    const cameraView = document.getElementById('cameraView');
+    const statusEl = document.getElementById('status');
+    const payloadInput = document.getElementById('payloadInput');
+    const audioPlayer = document.getElementById('audioPlayer');
+    const videoPlayer = document.getElementById('videoPlayer');
+    const previewFrame = document.getElementById('previewFrame');
+    const downloadLink = document.getElementById('downloadLink');
+
+    let stream = null;
+    let detector = null;
+    let scanTimer = null;
+    let lastPayload = '';
+
+    function setStatus(text, isError = false) {
+      statusEl.textContent = text;
+      statusEl.classList.toggle('error', isError);
+    }
+
+    function resetPreview() {
+      audioPlayer.pause();
+      videoPlayer.pause();
+      audioPlayer.classList.add('hidden');
+      videoPlayer.classList.add('hidden');
+      previewFrame.classList.add('hidden');
+      downloadLink.classList.add('hidden');
+      audioPlayer.removeAttribute('src');
+      videoPlayer.removeAttribute('src');
+      previewFrame.removeAttribute('src');
+      downloadLink.removeAttribute('href');
+      audioPlayer.load();
+      videoPlayer.load();
+    }
+
+    function dataUrlToText(payload) {
+      const prefix = 'data:text/html;base64,';
+      if (!payload.startsWith(prefix)) {
+        throw new Error('自己完結HTML payload ではありません');
+      }
+      const outer = payload.slice(prefix.length);
+      const bytes = Uint8Array.from(atob(outer), (ch) => ch.charCodeAt(0));
+      return new TextDecoder().decode(bytes);
+    }
+
+    function extractEmbeddedMedia(payload) {
+      const html = dataUrlToText(payload);
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const media = doc.querySelector('audio,video');
+      if (!media) {
+        return { html, mediaSrc: '', mediaTag: '' };
+      }
+      return {
+        html,
+        mediaSrc: media.getAttribute('src') || '',
+        mediaTag: media.tagName.toLowerCase()
+      };
+    }
+
+    async function restorePayload(payload) {
+      const trimmed = payload.trim();
+      if (!trimmed) {
+        setStatus('payload が空です', true);
+        return;
+      }
+
+      resetPreview();
+
+      try {
+        const { mediaSrc, mediaTag } = extractEmbeddedMedia(trimmed);
+        lastPayload = trimmed;
+        payloadInput.value = trimmed;
+        previewFrame.src = trimmed;
+        previewFrame.classList.remove('hidden');
+
+        if (mediaSrc) {
+          if (mediaTag === 'video') {
+            videoPlayer.src = mediaSrc;
+            videoPlayer.classList.remove('hidden');
+          } else {
+            audioPlayer.src = mediaSrc;
+            audioPlayer.classList.remove('hidden');
+          }
+          downloadLink.href = mediaSrc;
+          downloadLink.classList.remove('hidden');
+        }
+
+        setStatus('payload を復元しました。必要なら再生またはダウンロードできます。');
+      } catch (err) {
+        setStatus(`復元に失敗しました: ${err.message || err}`, true);
+      }
+    }
+
+    function stopCamera() {
+      if (scanTimer) {
+        clearInterval(scanTimer);
+        scanTimer = null;
+      }
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+        stream = null;
+      }
+      cameraView.srcObject = null;
+      cameraView.classList.add('hidden');
+      stopBtn.classList.add('hidden');
+    }
+
+    async function startScan() {
+      if (!('BarcodeDetector' in window)) {
+        setStatus('このブラウザでは BarcodeDetector が使えません。payload貼り付けで試してください。', true);
+        return;
+      }
+
+      try {
+        detector = new BarcodeDetector({ formats: ['qr_code'] });
+      } catch (err) {
+        setStatus('このブラウザの BarcodeDetector は QR に非対応です。payload貼り付けで試してください。', true);
+        return;
+      }
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: false
+        });
+      } catch (err) {
+        setStatus('カメラを起動できませんでした', true);
+        return;
+      }
+
+      cameraView.srcObject = stream;
+      cameraView.classList.remove('hidden');
+      stopBtn.classList.remove('hidden');
+      setStatus('QRをカメラにかざしてください');
+
+      scanTimer = setInterval(async () => {
+        if (!detector || cameraView.readyState < 2) return;
+        try {
+          const barcodes = await detector.detect(cameraView);
+          const hit = barcodes.find((code) => typeof code.rawValue === 'string' && code.rawValue.startsWith('data:text/html;base64,'));
+          if (!hit) return;
+          stopCamera();
+          await restorePayload(hit.rawValue);
+        } catch (err) {
+          setStatus('スキャン中です...', false);
+        }
+      }, 300);
+    }
+
+    scanBtn.addEventListener('click', startScan);
+    stopBtn.addEventListener('click', () => {
+      stopCamera();
+      setStatus('カメラを閉じました');
+    });
+    restoreBtn.addEventListener('click', () => restorePayload(payloadInput.value));
+
+    window.addEventListener('beforeunload', stopCamera);
+
+    if (location.hash.startsWith('#payload=')) {
+      const payload = decodeURIComponent(location.hash.slice('#payload='.length));
+      restorePayload(payload);
+    }
+  </script>
+</body>
+</html>

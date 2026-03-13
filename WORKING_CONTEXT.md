@@ -83,3 +83,11 @@ Ideal entry UX:
 - The decoder HTML then handles reading the actual payload QR code(s).
 
 This keeps the stock camera's job minimal and moves actual decoding into a controlled local web app.
+
+Current Phase 2a starting point:
+
+- `/Users/miwakenomac/Projects/parapara-qr/parapara-qr-decoder.html`
+- single-button decoder entry
+- camera start attempt through browser APIs
+- manual payload paste fallback
+- local iframe/media restoration and download link generation

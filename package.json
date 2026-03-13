@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "test": "playwright test tests/poc.spec.ts"
+    "test": "playwright test tests"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
