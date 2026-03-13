@@ -28,6 +28,21 @@ Important known limitation:
 
 - iPhone/Android stock camera apps may recognize the QR but refuse to open `data:` URLs. That is expected for Phase 1 and is planned to be solved by a decoder app in Phase 2.
 
+## Phase 1 Validation Result
+
+What has been validated:
+
+- A short audio clip can be embedded into a single self-contained QR.
+- The QR payload can contain both the playback HTML and the audio bytes.
+- When that payload is opened on a device, the original audio can be reconstructed and played locally on that device.
+- Browser-side "test playback" and Playwright round-trip tests both confirm this.
+
+What has not been validated yet:
+
+- Self-contained video payloads.
+- General-purpose stock camera apps directly opening the payload.
+- Multi-QR chunking and reassembly.
+
 ## Current Local Setup
 
 - Canonical repo used for implementation: `/Users/miwakenomac/Projects/parapara-qr`
@@ -51,3 +66,20 @@ We are prioritizing:
 - Multi-QR chunking for longer audio/video.
 - Printable flipbook + QR layout.
 - Optional printed source/README bundle for long-term recoverability.
+
+## Phase 2 Decoder Direction
+
+The preferred decoder architecture is now:
+
+1. Open a dedicated decoder HTML first.
+2. Tap a single button such as "QRを読んで元の音声・動画を復元する".
+3. The decoder HTML opens the camera with browser APIs.
+4. It scans one or more payload QR codes.
+5. It reconstructs the media locally and then plays or downloads it.
+
+Ideal entry UX:
+
+- A general camera app reads a small entry QR that opens the decoder HTML.
+- The decoder HTML then handles reading the actual payload QR code(s).
+
+This keeps the stock camera's job minimal and moves actual decoding into a controlled local web app.
