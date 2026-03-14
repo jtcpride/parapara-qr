@@ -11,6 +11,17 @@
 - `BarcodeDetector` が使える環境では QR 読み取り開始が可能
 - まずは手動で `data:text/html;base64,...` を貼り付けて復元する最小導線を用意
 - 復元後は iframe プレビュー、音声/動画タグ、ダウンロード導線を表示
+- `index.html` は decoder への入口ページで、GitHub Pages 公開後は `https://jtcpride.github.io/parapara-qr/` を入口QRにできる
+
+## 目指す実利用フロー
+
+1. デコーダHTMLのURLを埋め込んだ入口QRを読む
+2. iPhone 上でデコーダページを開く
+3. デコーダ側のボタンからカメラを起動する
+4. データ本体のQRを読む
+5. 復元した音声・動画をその端末上で保存する
+
+ブラウザの保存先は端末やブラウザ設定に依存するが、iPhone では通常 Files のダウンロード領域が候補になる。
 
 ## Phase 1 で検証できたこと
 

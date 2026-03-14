@@ -91,3 +91,13 @@ Current Phase 2a starting point:
 - camera start attempt through browser APIs
 - manual payload paste fallback
 - local iframe/media restoration and download link generation
+- root entry page at `/Users/miwakenomac/Projects/parapara-qr/index.html`
+- GitHub Pages workflow at `/Users/miwakenomac/Projects/parapara-qr/.github/workflows/pages.yml`
+
+Desired end-user path:
+
+1. Read an entry QR that points to the hosted decoder page.
+2. Open the decoder on iPhone.
+3. Tap the decode button to open the camera inside the decoder page.
+4. Read the payload QR code(s).
+5. Save the reconstructed media locally on the device.

@@ -124,6 +124,7 @@
     let detector = null;
     let scanTimer = null;
     let lastPayload = '';
+    let lastDownloadUrl = '';
 
     function setStatus(text, isError = false) {
       statusEl.textContent = text;
@@ -141,8 +142,47 @@
       videoPlayer.removeAttribute('src');
       previewFrame.removeAttribute('src');
       downloadLink.removeAttribute('href');
+      if (lastDownloadUrl) {
+        URL.revokeObjectURL(lastDownloadUrl);
+        lastDownloadUrl = '';
+      }
       audioPlayer.load();
       videoPlayer.load();
+    }
+
+    function guessFileExtension(mimeType) {
+      if (mimeType.includes('webm')) return 'webm';
+      if (mimeType.includes('mpeg')) return 'mp3';
+      if (mimeType.includes('wav')) return 'wav';
+      if (mimeType.includes('ogg')) return 'ogg';
+      if (mimeType.includes('mp4')) return 'mp4';
+      return 'bin';
+    }
+
+    async function prepareDownload(mediaSrc, mediaTag) {
+      if (!mediaSrc) return false;
+      const response = await fetch(mediaSrc);
+      const blob = await response.blob();
+      const extension = guessFileExtension(blob.type || '');
+      const filename = mediaTag === 'video'
+        ? `restored-video.${extension}`
+        : `restored-audio.${extension}`;
+      lastDownloadUrl = URL.createObjectURL(blob);
+      downloadLink.href = lastDownloadUrl;
+      downloadLink.download = filename;
+      downloadLink.textContent = `${filename} をダウンロード`;
+      downloadLink.classList.remove('hidden');
+      return true;
+    }
+
+    function tryAutoDownload() {
+      if (!downloadLink.href) return false;
+      try {
+        downloadLink.click();
+        return true;
+      } catch (err) {
+        return false;
+      }
     }
 
     function dataUrlToText(payload) {
@@ -193,11 +233,15 @@
             audioPlayer.src = mediaSrc;
             audioPlayer.classList.remove('hidden');
           }
-          downloadLink.href = mediaSrc;
-          downloadLink.classList.remove('hidden');
+          await prepareDownload(mediaSrc, mediaTag);
         }
 
-        setStatus('payload を復元しました。必要なら再生またはダウンロードできます。');
+        const autoDownloaded = tryAutoDownload();
+        setStatus(
+          autoDownloaded
+            ? 'payload を復元し、ダウンロードを開始しました。保存先を確認してください。'
+            : 'payload を復元しました。必要なら再生またはダウンロードできます。'
+        );
       } catch (err) {
         setStatus(`復元に失敗しました: ${err.message || err}`, true);
       }

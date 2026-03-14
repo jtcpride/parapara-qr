@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { test, expect } from '@playwright/test';
 
 const decoderPath = pathToFileURL(path.resolve(__dirname, '..', 'parapara-qr-decoder.html')).href;
+const entryPath = pathToFileURL(path.resolve(__dirname, '..', 'index.html')).href;
 
 function buildPayload(audioBytes: number[]) {
   const binary = Buffer.from(audioBytes).toString('base64');
@@ -12,6 +13,11 @@ function buildPayload(audioBytes: number[]) {
 
 test.beforeEach(async ({ page }) => {
   await page.goto(decoderPath);
+});
+
+test('入口ページから decoder へ遷移する', async ({ page }) => {
+  await page.goto(entryPath);
+  await expect(page).toHaveURL(/parapara-qr-decoder\.html$/);
 });
 
 test('手動貼り付けで payload を復元できる', async ({ page }) => {
@@ -25,4 +31,5 @@ test('手動貼り付けで payload を復元できる', async ({ page }) => {
 
   const src = await page.locator('#audioPlayer').getAttribute('src');
   expect(src?.startsWith('data:audio/webm;base64,')).toBeTruthy();
+  await expect(page.locator('#downloadLink')).toHaveAttribute('download', /restored-audio/);
 });
