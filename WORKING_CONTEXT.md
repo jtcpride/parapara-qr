@@ -92,7 +92,7 @@ Current Phase 2a starting point:
 - manual payload paste fallback
 - local iframe/media restoration and download link generation
 - root entry page at `/Users/miwakenomac/Projects/parapara-qr/index.html`
-- GitHub Pages workflow at `/Users/miwakenomac/Projects/parapara-qr/.github/workflows/pages.yml`
+- live entry URL: `https://jtcpride.github.io/parapara-qr/`
 
 Desired end-user path:
 

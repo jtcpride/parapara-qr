@@ -13,6 +13,10 @@
 - 復元後は iframe プレビュー、音声/動画タグ、ダウンロード導線を表示
 - `index.html` は decoder への入口ページで、GitHub Pages 公開後は `https://jtcpride.github.io/parapara-qr/` を入口QRにできる
 
+公開中の入口URL:
+
+- `https://jtcpride.github.io/parapara-qr/`
+
 ## 目指す実利用フロー
 
 1. デコーダHTMLのURLを埋め込んだ入口QRを読む
@@ -22,6 +26,7 @@
 5. 復元した音声・動画をその端末上で保存する
 
 ブラウザの保存先は端末やブラウザ設定に依存するが、iPhone では通常 Files のダウンロード領域が候補になる。
+入口QRを作るときは、上記の公開URLをそのまま埋め込めばよい。
 
 ## Phase 1 で検証できたこと
 
