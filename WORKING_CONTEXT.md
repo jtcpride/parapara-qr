@@ -43,6 +43,19 @@ What has not been validated yet:
 - General-purpose stock camera apps directly opening the payload.
 - Multi-QR chunking and reassembly.
 
+## Phase 2a Validation Result
+
+What has now been validated on iPhone:
+
+- The hosted decoder page can be opened from an entry URL.
+- The decoder can start camera-based QR reading on iPhone Safari using the current fallback path.
+- A payload QR shown on a Mac screen can be scanned by the iPhone decoder.
+- The original audio file can be reconstructed and downloaded locally as `restored-audio.webm`.
+
+Current caveat:
+
+- Local save is working, but immediate playback on iPhone is still format-compatibility-limited because the restored file is `webm/opus`.
+
 ## Current Local Setup
 
 - Canonical repo used for implementation: `/Users/miwakenomac/Projects/parapara-qr`
