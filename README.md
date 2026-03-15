@@ -9,6 +9,7 @@
 - `parapara-qr-decoder.html` を追加済み
 - デコーダHTML上のボタンからカメラ起動を試せる
 - `BarcodeDetector` が使える環境では QR 読み取り開始が可能
+- iPhone Safari など `BarcodeDetector` 非対応環境では `jsQR` fallback で読取を試みる
 - まずは手動で `data:text/html;base64,...` を貼り付けて復元する最小導線を用意
 - 復元後は iframe プレビュー、音声/動画タグ、ダウンロード導線を表示
 - `index.html` は decoder への入口ページで、GitHub Pages 公開後は `https://jtcpride.github.io/parapara-qr/` を入口QRにできる
