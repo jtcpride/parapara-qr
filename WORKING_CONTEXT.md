@@ -55,6 +55,7 @@ What has now been validated on iPhone:
 Current caveat:
 
 - Local save is working, but immediate playback on iPhone is still format-compatibility-limited because the restored file is `webm/opus`.
+- To improve this, the decoder now keeps `webm/opus` as the canonical restored file and additionally tries to generate `wav` as a compatibility-oriented export.
 
 ## Current Local Setup
 

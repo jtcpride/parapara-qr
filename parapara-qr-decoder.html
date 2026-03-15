@@ -85,6 +85,9 @@
       color: #fff;
       font-weight: 700;
     }
+    .link-btn.alt {
+      background: #0f766e;
+    }
   </style>
 </head>
 <body>
@@ -104,7 +107,8 @@
       <audio id="audioPlayer" class="hidden" controls></audio>
       <video id="videoPlayer" class="hidden" controls playsinline></video>
       <iframe id="previewFrame" class="hidden" title="自己完結QRプレビュー"></iframe>
-      <a id="downloadLink" class="link-btn hidden" download>復元したメディアをダウンロード</a>
+      <a id="downloadLink" class="link-btn hidden" download>元の形式をダウンロード</a>
+      <a id="compatDownloadLink" class="link-btn alt hidden" download>互換性優先形式をダウンロード</a>
     </div>
   </main>
 
@@ -10224,12 +10228,14 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     const videoPlayer = document.getElementById('videoPlayer');
     const previewFrame = document.getElementById('previewFrame');
     const downloadLink = document.getElementById('downloadLink');
+    const compatDownloadLink = document.getElementById('compatDownloadLink');
 
     let stream = null;
     let detector = null;
     let scanTimer = null;
     let lastPayload = '';
     let lastDownloadUrl = '';
+    let lastCompatDownloadUrl = '';
     const scanCanvas = document.createElement('canvas');
     const scanContext = scanCanvas.getContext('2d', { willReadFrequently: true });
 
@@ -10245,13 +10251,19 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       videoPlayer.classList.add('hidden');
       previewFrame.classList.add('hidden');
       downloadLink.classList.add('hidden');
+      compatDownloadLink.classList.add('hidden');
       audioPlayer.removeAttribute('src');
       videoPlayer.removeAttribute('src');
       previewFrame.removeAttribute('src');
       downloadLink.removeAttribute('href');
+      compatDownloadLink.removeAttribute('href');
       if (lastDownloadUrl) {
         URL.revokeObjectURL(lastDownloadUrl);
         lastDownloadUrl = '';
+      }
+      if (lastCompatDownloadUrl) {
+        URL.revokeObjectURL(lastCompatDownloadUrl);
+        lastCompatDownloadUrl = '';
       }
       audioPlayer.load();
       videoPlayer.load();
@@ -10277,9 +10289,84 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       lastDownloadUrl = URL.createObjectURL(blob);
       downloadLink.href = lastDownloadUrl;
       downloadLink.download = filename;
-      downloadLink.textContent = `${filename} をダウンロード`;
+      downloadLink.textContent = `元の形式 (${filename}) をダウンロード`;
       downloadLink.classList.remove('hidden');
-      return true;
+      return { blob, filename };
+    }
+
+    function getAudioContextCtor() {
+      return window.AudioContext || window.webkitAudioContext || null;
+    }
+
+    function audioBufferToWavBlob(audioBuffer) {
+      const numChannels = audioBuffer.numberOfChannels;
+      const sampleRate = audioBuffer.sampleRate;
+      const format = 1;
+      const bitDepth = 16;
+      const bytesPerSample = bitDepth / 8;
+      const blockAlign = numChannels * bytesPerSample;
+      const dataLength = audioBuffer.length * blockAlign;
+      const buffer = new ArrayBuffer(44 + dataLength);
+      const view = new DataView(buffer);
+
+      function writeString(offset, value) {
+        for (let i = 0; i < value.length; i += 1) {
+          view.setUint8(offset + i, value.charCodeAt(i));
+        }
+      }
+
+      writeString(0, 'RIFF');
+      view.setUint32(4, 36 + dataLength, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, format, true);
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * blockAlign, true);
+      view.setUint16(32, blockAlign, true);
+      view.setUint16(34, bitDepth, true);
+      writeString(36, 'data');
+      view.setUint32(40, dataLength, true);
+
+      const channelData = [];
+      for (let channel = 0; channel < numChannels; channel += 1) {
+        channelData.push(audioBuffer.getChannelData(channel));
+      }
+
+      let offset = 44;
+      for (let i = 0; i < audioBuffer.length; i += 1) {
+        for (let channel = 0; channel < numChannels; channel += 1) {
+          const sample = Math.max(-1, Math.min(1, channelData[channel][i]));
+          const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+          view.setInt16(offset, int16, true);
+          offset += 2;
+        }
+      }
+
+      return new Blob([buffer], { type: 'audio/wav' });
+    }
+
+    async function prepareCompatibilityDownload(originalBlob) {
+      const AudioContextCtor = getAudioContextCtor();
+      if (!AudioContextCtor) return false;
+
+      const audioContext = new AudioContextCtor();
+      try {
+        const arrayBuffer = await originalBlob.arrayBuffer();
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+        const wavBlob = audioBufferToWavBlob(audioBuffer);
+        lastCompatDownloadUrl = URL.createObjectURL(wavBlob);
+        compatDownloadLink.href = lastCompatDownloadUrl;
+        compatDownloadLink.download = 'restored-audio.wav';
+        compatDownloadLink.textContent = '互換性優先形式 (restored-audio.wav) をダウンロード';
+        compatDownloadLink.classList.remove('hidden');
+        return true;
+      } catch (err) {
+        return false;
+      } finally {
+        await audioContext.close();
+      }
     }
 
     function tryAutoDownload() {
@@ -10333,20 +10420,23 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         previewFrame.classList.remove('hidden');
 
         if (mediaSrc) {
+          const prepared = await prepareDownload(mediaSrc, mediaTag);
           if (mediaTag === 'video') {
-            videoPlayer.src = mediaSrc;
+            videoPlayer.src = lastDownloadUrl || mediaSrc;
             videoPlayer.classList.remove('hidden');
           } else {
-            audioPlayer.src = mediaSrc;
+            audioPlayer.src = lastDownloadUrl || mediaSrc;
             audioPlayer.classList.remove('hidden');
+            if (prepared?.blob) {
+              await prepareCompatibilityDownload(prepared.blob);
+            }
           }
-          await prepareDownload(mediaSrc, mediaTag);
         }
 
         const autoDownloaded = tryAutoDownload();
         setStatus(
           autoDownloaded
-            ? 'payload を復元し、ダウンロードを開始しました。保存先を確認してください。'
+            ? 'payload を復元し、ダウンロードを開始しました。必要なら互換性優先の WAV も試してください。'
             : 'payload を復元しました。必要なら再生またはダウンロードできます。'
         );
       } catch (err) {
