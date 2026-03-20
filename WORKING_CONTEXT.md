@@ -71,8 +71,9 @@ We are prioritizing:
 1. Keeping the payload self-contained.
 2. Preserving zero external runtime dependencies.
 3. Making recording work reliably on desktop browsers.
-4. Ensuring QR rendering picks a valid version instead of silently producing broken output.
-5. Keeping the code and tests aligned with the original Phase 1 instruction document.
+4. Adapting recording duration on hosted iPhone/Safari sessions so a single recorded clip still fits within one QR.
+5. Ensuring QR rendering picks a valid version instead of silently producing broken output.
+6. Keeping the code and tests aligned with the original Phase 1 instruction document.
 
 ## Next Likely Steps After Phase 1
 

@@ -151,7 +151,8 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     return function(a,b){var c=new n(a,l[b]);return c.addData.apply(c,Array.prototype.slice.call(arguments,2)),c}}();
 
     const MAX_PAYLOAD_BYTES = 2953;
-    const RECORD_DURATION_MS = 1000;
+    const DEFAULT_RECORD_DURATION_MS = 1000;
+    const FALLBACK_RECORD_DURATION_MS = 350;
     const RECORD_BITS_PER_SECOND = 8000;
     const MIME_FALLBACK = 'audio/octet-stream';
 
@@ -202,6 +203,17 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     function inferMime(file, isRecording) {
       if (isRecording) return 'audio/webm';
       return file?.type && file.type.trim() ? file.type : MIME_FALLBACK;
+    }
+
+    function supportsCompactRecording() {
+      if (typeof MediaRecorder === 'undefined') return false;
+      if (typeof MediaRecorder.isTypeSupported !== 'function') return false;
+      return MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        || MediaRecorder.isTypeSupported('audio/webm');
+    }
+
+    function getRecordingDurationMs() {
+      return supportsCompactRecording() ? DEFAULT_RECORD_DURATION_MS : FALLBACK_RECORD_DURATION_MS;
     }
 
     function buildPayload(audioBytes, mimeType) {
@@ -350,8 +362,9 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       try {
         const rec = createRecorder(stream);
 
-        let remain = Math.ceil(RECORD_DURATION_MS / 100);
-        recordTimer.textContent = `${(RECORD_DURATION_MS / 1000).toFixed(1)} 秒`;
+        const recordDurationMs = getRecordingDurationMs();
+        let remain = Math.ceil(recordDurationMs / 100);
+        recordTimer.textContent = `${(recordDurationMs / 1000).toFixed(1)} 秒`;
         const t = setInterval(() => {
           remain -= 1;
           recordTimer.textContent = `${Math.max(0, remain / 10).toFixed(1)} 秒`;
@@ -381,7 +394,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
             // ignore
           }
           setTimeout(() => rec.state !== 'inactive' && rec.stop(), 150);
-        }, RECORD_DURATION_MS);
+        }, recordDurationMs);
         const blob = await blobPromise;
         clearInterval(t);
         const outType = blob.type && blob.type.trim() ? blob.type : 'audio/webm';
