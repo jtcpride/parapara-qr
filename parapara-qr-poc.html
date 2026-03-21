@@ -153,6 +153,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     const MAX_PAYLOAD_BYTES = 2953;
     const DEFAULT_RECORD_DURATION_MS = 1000;
     const FALLBACK_RECORD_DURATION_MS = 350;
+    const APPLE_RECORD_DURATION_MS = 250;
     const RECORD_BITS_PER_SECOND = 8000;
     const MIME_FALLBACK = 'audio/octet-stream';
 
@@ -212,7 +213,18 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         || MediaRecorder.isTypeSupported('audio/webm');
     }
 
+    function isLikelyAppleBrowser() {
+      const ua = navigator.userAgent || '';
+      const platform = navigator.platform || '';
+      const touchPoints = navigator.maxTouchPoints || 0;
+      const isIOSDevice = /iP(hone|ad|od)/.test(ua);
+      const isIPadLikeMac = platform === 'MacIntel' && touchPoints > 1;
+      const isWebKitBrowser = /Safari\//.test(ua) && !/(CriOS|FxiOS|EdgiOS|OPiOS)/.test(ua);
+      return isIOSDevice || isIPadLikeMac || isWebKitBrowser;
+    }
+
     function getRecordingDurationMs() {
+      if (isLikelyAppleBrowser()) return APPLE_RECORD_DURATION_MS;
       return supportsCompactRecording() ? DEFAULT_RECORD_DURATION_MS : FALLBACK_RECORD_DURATION_MS;
     }
 
