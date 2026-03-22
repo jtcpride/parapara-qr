@@ -57,6 +57,22 @@ Current caveat:
 - Local save is working, but immediate playback on iPhone is still format-compatibility-limited because the restored file is `webm/opus`.
 - To improve this, the decoder now keeps `webm/opus` as the canonical restored file and additionally tries to generate `wav` as a compatibility-oriented export.
 
+## Phase 2 Current Start Point
+
+We have now started the multi-QR phase on top of the Phase 1 milestone.
+
+What is implemented:
+
+- The encoder can fall back from a single self-contained QR to multiple `PQR1` chunk QR codes.
+- The result UI can step through chunked QR codes one by one.
+- The decoder can accept `PQR1` chunk payloads, keep progress, and reconstruct the original media once all chunks are present.
+- Tests now cover both single-QR and multi-QR round trips on desktop.
+
+Current intent:
+
+- Use desktop/Mac as the primary environment for stabilizing chunk format and reassembly.
+- Use iPhone as a periodic smoke test environment rather than the first place where logic is debugged.
+
 ## Current Local Setup
 
 - Canonical repo used for implementation: `/Users/miwakenomac/Projects/parapara-qr`

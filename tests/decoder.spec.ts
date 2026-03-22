@@ -4,6 +4,8 @@ import { test, expect } from '@playwright/test';
 
 const decoderPath = pathToFileURL(path.resolve(__dirname, '..', 'parapara-qr-decoder.html')).href;
 const entryPath = pathToFileURL(path.resolve(__dirname, '..', 'index.html')).href;
+const CHUNK_PREFIX = 'PQR1';
+const MAX_CHUNK_PAYLOAD_BYTES = 2200;
 
 function buildWavBytes() {
   const sampleRate = 8000;
@@ -36,6 +38,24 @@ function buildPayload(audioBytes: Buffer, mimeType = 'audio/wav') {
   return `data:text/html;base64,${Buffer.from(html, 'utf8').toString('base64')}`;
 }
 
+function buildChunkPayloads(audioBytes: Buffer, mimeType = 'audio/wav') {
+  const audioB64 = audioBytes.toString('base64');
+  let total = 1;
+  while (true) {
+    const headerLength = `${CHUNK_PREFIX}:${total}:${total}:${mimeType}:`.length;
+    const chunkSize = MAX_CHUNK_PAYLOAD_BYTES - headerLength;
+    const nextTotal = Math.ceil(audioB64.length / chunkSize);
+    if (nextTotal === total) {
+      const chunks = [];
+      for (let index = 1, start = 0; index <= total; index += 1, start += chunkSize) {
+        chunks.push(`${CHUNK_PREFIX}:${index}:${total}:${mimeType}:${audioB64.slice(start, start + chunkSize)}`);
+      }
+      return chunks;
+    }
+    total = nextTotal;
+  }
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto(decoderPath);
 });
@@ -59,4 +79,20 @@ test('手動貼り付けで payload を復元できる', async ({ page }) => {
   expect(src?.startsWith('blob:')).toBeTruthy();
   await expect(page.locator('#downloadLink')).toHaveAttribute('download', /restored-audio/);
   await expect(page.locator('#compatDownloadLink')).toHaveAttribute('download', 'restored-audio.wav');
+});
+
+test('分割QR payload を順番に貼ると復元できる', async ({ page }) => {
+  const chunks = buildChunkPayloads(Buffer.alloc(2600, 0x62), 'audio/webm');
+  expect(chunks.length).toBeGreaterThan(1);
+
+  await page.locator('#payloadInput').fill(chunks[0]);
+  await page.getByRole('button', { name: '貼り付けたpayloadを復元する' }).click();
+  await expect(page.locator('#status')).toContainText(`分割QRを読み取り中です (1/${chunks.length})`);
+
+  await page.locator('#payloadInput').fill(chunks[1]);
+  await page.getByRole('button', { name: '貼り付けたpayloadを復元する' }).click();
+
+  await expect(page.locator('#previewFrame')).toBeVisible();
+  await expect(page.locator('#downloadLink')).toBeVisible();
+  await expect(page.locator('#downloadLink')).toHaveAttribute('download', /restored-audio\.webm/);
 });

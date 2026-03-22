@@ -45,6 +45,10 @@
     .sub-btn { background: #334155; color: #fff; font-size: .95rem; }
     .secondary { background: #e2e8f0; color: #111; }
     .danger { background: #dc2626; color: #fff; }
+    button:disabled {
+      opacity: .45;
+      cursor: default;
+    }
     .status {
       min-height: 1.5em;
       font-size: .95rem;
@@ -114,6 +118,10 @@
       <div id="meta"></div>
       <div class="stack">
         <button class="main-btn" id="testPlayBtn">▶ テスト再生</button>
+        <div class="stack hidden" id="chunkNav">
+          <button class="secondary" id="prevChunkBtn">← 前のQR</button>
+          <button class="secondary" id="nextChunkBtn">次のQR →</button>
+        </div>
         <button class="secondary" id="printBtn">🖨 印刷</button>
         <button class="secondary" id="retryBtn">← やり直し</button>
       </div>
@@ -151,11 +159,14 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     return function(a,b){var c=new n(a,l[b]);return c.addData.apply(c,Array.prototype.slice.call(arguments,2)),c}}();
 
     const MAX_PAYLOAD_BYTES = 2953;
+    const MAX_CHUNK_PAYLOAD_BYTES = 2200;
+    const MAX_MULTI_QR_CHUNKS = 12;
     const DEFAULT_RECORD_DURATION_MS = 1000;
     const FALLBACK_RECORD_DURATION_MS = 350;
     const APPLE_RECORD_DURATION_MS = 250;
     const RECORD_BITS_PER_SECOND = 8000;
     const MIME_FALLBACK = 'audio/octet-stream';
+    const CHUNK_PREFIX = 'PQR1';
 
     const homeScreen = document.getElementById('homeScreen');
     const recordScreen = document.getElementById('recordScreen');
@@ -173,6 +184,9 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     const qrContainer = document.getElementById('qrContainer');
     const meta = document.getElementById('meta');
     const testPlayBtn = document.getElementById('testPlayBtn');
+    const chunkNav = document.getElementById('chunkNav');
+    const prevChunkBtn = document.getElementById('prevChunkBtn');
+    const nextChunkBtn = document.getElementById('nextChunkBtn');
     const printBtn = document.getElementById('printBtn');
     const retryBtn = document.getElementById('retryBtn');
     const resultStatus = document.getElementById('resultStatus');
@@ -181,6 +195,11 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     const errorRetryBtn = document.getElementById('errorRetryBtn');
 
     let currentPayload = '';
+    let currentPayloads = [];
+    let currentChunkIndex = 0;
+    let currentResultMode = 'single';
+    let currentMimeType = '';
+    let currentAudioBytesLength = 0;
 
     const show = (section) => {
       [homeScreen, recordScreen, resultScreen, errorScreen].forEach((el) => el.classList.add('hidden'));
@@ -236,6 +255,32 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       return { payload, audioB64, html };
     }
 
+    function buildChunkHeader(index, total, mimeType) {
+      return `${CHUNK_PREFIX}:${index}:${total}:${mimeType}:`;
+    }
+
+    function buildChunkPayloads(audioB64, mimeType) {
+      let total = 1;
+      while (true) {
+        const headerLength = buildChunkHeader(total, total, mimeType).length;
+        const chunkSize = MAX_CHUNK_PAYLOAD_BYTES - headerLength;
+        if (chunkSize <= 0) throw new Error('chunk size unavailable');
+        const nextTotal = Math.ceil(audioB64.length / chunkSize);
+        if (nextTotal === total) {
+          const payloads = [];
+          for (let index = 1, start = 0; index <= total; index += 1, start += chunkSize) {
+            const chunk = audioB64.slice(start, start + chunkSize);
+            payloads.push(`${buildChunkHeader(index, total, mimeType)}${chunk}`);
+          }
+          return payloads;
+        }
+        total = nextTotal;
+        if (total > MAX_MULTI_QR_CHUNKS) {
+          throw new Error(`分割QRが多すぎます（${total}枚）`);
+        }
+      }
+    }
+
     function drawQr(payload) {
       qrContainer.innerHTML = '';
       if (typeof QRCode === 'undefined') {
@@ -265,12 +310,8 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       show(errorScreen);
     }
 
-    async function processAudioBytes(audioBytes, mimeType) {
-      const { payload } = buildPayload(audioBytes, mimeType);
-      if (payload.length > MAX_PAYLOAD_BYTES) {
-        showError(`ファイルが大きすぎます（${audioBytes.length} bytes / 上限 約1,600 bytes）`);
-        return;
-      }
+    function updateResultUi() {
+      const payload = currentPayloads[currentChunkIndex];
       let qr;
       try {
         qr = drawQr(payload);
@@ -278,16 +319,55 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         showError(`QR化に失敗しました: ${err?.message || err}`);
         return;
       }
+
       currentPayload = payload;
       playbackFrame.classList.add('hidden');
       playbackFrame.removeAttribute('src');
-      meta.innerHTML = [
-        `データ: ${audioBytes.length.toLocaleString()} B`,
+
+      const isChunked = currentResultMode === 'chunked';
+      const lines = [
+        `データ: ${currentAudioBytesLength.toLocaleString()} B`,
         `QR Version: ${qr.typeNumber} (L)`,
         `ペイロード: ${payload.length.toLocaleString()} B`
-      ].join('<br>');
-      resultStatus.textContent = '';
+      ];
+      if (isChunked) {
+        lines.push(`分割QR: ${currentPayloads.length} 枚`);
+        lines.push(`表示中: ${currentChunkIndex + 1} / ${currentPayloads.length}`);
+        lines.push(`形式: ${currentMimeType}`);
+      }
+      meta.innerHTML = lines.join('<br>');
+
+      chunkNav.classList.toggle('hidden', !isChunked);
+      prevChunkBtn.disabled = !isChunked || currentChunkIndex === 0;
+      nextChunkBtn.disabled = !isChunked || currentChunkIndex === currentPayloads.length - 1;
+      testPlayBtn.disabled = isChunked;
+      resultStatus.textContent = isChunked
+        ? '複数QRモードです。各QRを順に読み取って復元してください。'
+        : '';
       show(resultScreen);
+    }
+
+    async function processAudioBytes(audioBytes, mimeType) {
+      try {
+        const { payload, audioB64 } = buildPayload(audioBytes, mimeType);
+        currentMimeType = mimeType;
+        currentAudioBytesLength = audioBytes.length;
+        currentChunkIndex = 0;
+
+        if (payload.length <= MAX_PAYLOAD_BYTES) {
+          currentResultMode = 'single';
+          currentPayloads = [payload];
+          updateResultUi();
+          return;
+        }
+
+        const chunkPayloads = buildChunkPayloads(audioB64, mimeType);
+        currentResultMode = 'chunked';
+        currentPayloads = chunkPayloads;
+        updateResultUi();
+      } catch (err) {
+        showError(`ファイルが大きすぎます（${audioBytes.length} bytes / 単一QR上限 約1,600 bytes、分割時エラー: ${err?.message || err}）`);
+      }
     }
 
     async function handleFile(file) {
@@ -425,9 +505,19 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     cancelRecordBtn.addEventListener('click', () => show(homeScreen));
     retryBtn.addEventListener('click', () => show(homeScreen));
     errorRetryBtn.addEventListener('click', () => show(homeScreen));
+    prevChunkBtn.addEventListener('click', () => {
+      if (currentChunkIndex <= 0) return;
+      currentChunkIndex -= 1;
+      updateResultUi();
+    });
+    nextChunkBtn.addEventListener('click', () => {
+      if (currentChunkIndex >= currentPayloads.length - 1) return;
+      currentChunkIndex += 1;
+      updateResultUi();
+    });
 
     testPlayBtn.addEventListener('click', () => {
-      if (!currentPayload) return;
+      if (!currentPayload || currentResultMode !== 'single') return;
       playbackFrame.src = currentPayload;
       playbackFrame.classList.remove('hidden');
       resultStatus.textContent = 'テスト再生を表示しました';

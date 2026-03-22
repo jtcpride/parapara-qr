@@ -5,6 +5,7 @@ import jsQR from 'jsqr';
 import { PNG } from 'pngjs';
 
 const htmlPath = pathToFileURL(path.resolve(__dirname, '..', 'parapara-qr-poc.html')).href;
+const CHUNK_PREFIX = 'PQR1:';
 
 function decodeQrFromPng(buffer: Buffer): string {
   const png = PNG.sync.read(buffer);
@@ -35,6 +36,26 @@ test('QR生成（ファイル入力）', async ({ page }) => {
   const png = await canvas.screenshot();
   const decoded = decodeQrFromPng(png);
   expect(decoded.startsWith('data:text/html;base64,')).toBeTruthy();
+});
+
+test('QR生成（分割QR）', async ({ page }) => {
+  await page.setInputFiles('#fileInput', {
+    name: 'chunked.webm',
+    mimeType: 'audio/webm',
+    buffer: Buffer.alloc(1800, 0x61),
+  });
+
+  await expect(page.locator('#chunkNav')).toBeVisible();
+  await expect(page.getByRole('button', { name: '▶ テスト再生' })).toBeDisabled();
+  await expect(page.locator('#meta')).toContainText('分割QR');
+
+  const first = await page.locator('#qrContainer').getAttribute('title');
+  expect(first.startsWith(CHUNK_PREFIX)).toBeTruthy();
+
+  await page.getByRole('button', { name: '次のQR →' }).click();
+  const second = await page.locator('#qrContainer').getAttribute('title');
+  expect(second.startsWith(CHUNK_PREFIX)).toBeTruthy();
+  expect(second).not.toEqual(first);
 });
 
 test('QR生成（モック録音）', async ({ page }) => {
@@ -99,7 +120,7 @@ test('テスト再生ボタン', async ({ page }) => {
 
 test('サイズ超過ガード', async ({ page }) => {
   await page.setInputFiles('#fileInput', {
-    name: 'big.webm', mimeType: 'audio/webm', buffer: Buffer.alloc(3000, 7),
+    name: 'big.webm', mimeType: 'audio/webm', buffer: Buffer.alloc(30000, 7),
   });
   await expect(page.locator('#errorMessage')).toContainText('ファイルが大きすぎます');
 });

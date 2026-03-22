@@ -96,6 +96,7 @@
     <div class="stack">
       <button class="main-btn" id="scanBtn">QRを読んで元の音声・動画を復元する</button>
       <button class="secondary hidden" id="stopBtn">カメラを閉じる</button>
+      <button class="secondary hidden" id="resetChunksBtn">分割QRの読取状態をリセット</button>
       <video id="cameraView" class="hidden" playsinline muted autoplay></video>
       <p class="status" id="status" aria-live="polite"></p>
       <p class="note">
@@ -10220,6 +10221,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   <script>
     const scanBtn = document.getElementById('scanBtn');
     const stopBtn = document.getElementById('stopBtn');
+    const resetChunksBtn = document.getElementById('resetChunksBtn');
     const restoreBtn = document.getElementById('restoreBtn');
     const cameraView = document.getElementById('cameraView');
     const statusEl = document.getElementById('status');
@@ -10236,8 +10238,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     let lastPayload = '';
     let lastDownloadUrl = '';
     let lastCompatDownloadUrl = '';
+    let chunkSession = null;
     const scanCanvas = document.createElement('canvas');
     const scanContext = scanCanvas.getContext('2d', { willReadFrequently: true });
+    const CHUNK_PREFIX = 'PQR1';
 
     function setStatus(text, isError = false) {
       statusEl.textContent = text;
@@ -10267,6 +10271,11 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       }
       audioPlayer.load();
       videoPlayer.load();
+    }
+
+    function resetChunkSession() {
+      chunkSession = null;
+      resetChunksBtn.classList.add('hidden');
     }
 
     function guessFileExtension(mimeType) {
@@ -10389,6 +10398,58 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       return new TextDecoder().decode(bytes);
     }
 
+    function buildHtmlPayloadFromMedia(mimeType, base64) {
+      const html = `<audio controls autoplay src="data:${mimeType};base64,${base64}"></audio>`;
+      return `data:text/html;base64,${btoa(unescape(encodeURIComponent(html)))}`;
+    }
+
+    function parseChunkPayload(payload) {
+      if (!payload.startsWith(`${CHUNK_PREFIX}:`)) return null;
+      const first = payload.indexOf(':');
+      const second = payload.indexOf(':', first + 1);
+      const third = payload.indexOf(':', second + 1);
+      const fourth = payload.indexOf(':', third + 1);
+      if ([first, second, third, fourth].some((index) => index < 0)) {
+        throw new Error('分割QR payload の形式が不正です');
+      }
+      const index = Number(payload.slice(first + 1, second));
+      const total = Number(payload.slice(second + 1, third));
+      const mimeType = payload.slice(third + 1, fourth);
+      const chunk = payload.slice(fourth + 1);
+      if (!Number.isInteger(index) || !Number.isInteger(total) || index < 1 || total < 1 || index > total) {
+        throw new Error('分割QRの番号情報が不正です');
+      }
+      return { index, total, mimeType, chunk };
+    }
+
+    function acceptChunkPayload(payload) {
+      const parsed = parseChunkPayload(payload);
+      if (!parsed) return null;
+
+      if (!chunkSession || chunkSession.total !== parsed.total || chunkSession.mimeType !== parsed.mimeType) {
+        chunkSession = {
+          total: parsed.total,
+          mimeType: parsed.mimeType,
+          chunks: new Array(parsed.total).fill('')
+        };
+      }
+
+      chunkSession.chunks[parsed.index - 1] = parsed.chunk;
+      resetChunksBtn.classList.remove('hidden');
+
+      const filled = chunkSession.chunks.filter(Boolean).length;
+      if (filled < chunkSession.total) {
+        setStatus(`分割QRを読み取り中です (${filled}/${chunkSession.total})`);
+        return { complete: false };
+      }
+
+      const joined = chunkSession.chunks.join('');
+      const mediaSrc = `data:${chunkSession.mimeType};base64,${joined}`;
+      const payloadToRestore = buildHtmlPayloadFromMedia(chunkSession.mimeType, joined);
+      resetChunkSession();
+      return { complete: true, payloadToRestore, mediaSrc };
+    }
+
     function extractEmbeddedMedia(payload) {
       const html = dataUrlToText(payload);
       const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -10410,13 +10471,20 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         return;
       }
 
+      const chunkResult = acceptChunkPayload(trimmed);
+      if (chunkResult && !chunkResult.complete) {
+        payloadInput.value = trimmed;
+        return;
+      }
+      const sourcePayload = chunkResult?.payloadToRestore || trimmed;
+
       resetPreview();
 
       try {
-        const { mediaSrc, mediaTag } = extractEmbeddedMedia(trimmed);
-        lastPayload = trimmed;
+        const { mediaSrc, mediaTag } = extractEmbeddedMedia(sourcePayload);
+        lastPayload = sourcePayload;
         payloadInput.value = trimmed;
-        previewFrame.src = trimmed;
+        previewFrame.src = sourcePayload;
         previewFrame.classList.remove('hidden');
 
         if (mediaSrc) {
@@ -10463,7 +10531,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
       if (detector) {
         const barcodes = await detector.detect(cameraView);
-        const hit = barcodes.find((code) => typeof code.rawValue === 'string' && code.rawValue.startsWith('data:text/html;base64,'));
+        const hit = barcodes.find((code) => typeof code.rawValue === 'string' && (
+          code.rawValue.startsWith('data:text/html;base64,') || code.rawValue.startsWith(`${CHUNK_PREFIX}:`)
+        ));
         return hit?.rawValue || '';
       }
 
@@ -10479,7 +10549,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       const image = scanContext.getImageData(0, 0, width, height);
       const code = jsQR(image.data, width, height, { inversionAttempts: 'attemptBoth' });
       if (!code || typeof code.data !== 'string') return '';
-      return code.data.startsWith('data:text/html;base64,') ? code.data : '';
+      return (code.data.startsWith('data:text/html;base64,') || code.data.startsWith(`${CHUNK_PREFIX}:`)) ? code.data : '';
     }
 
     async function startScan() {
@@ -10516,8 +10586,17 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         try {
           const payload = await detectPayloadFromVideo();
           if (!payload) return;
+          const parsedChunk = parseChunkPayload(payload);
+          if (!parsedChunk) {
+            stopCamera();
+            await restorePayload(payload);
+            return;
+          }
+          payloadInput.value = payload;
+          const chunkResult = acceptChunkPayload(payload);
+          if (!chunkResult || !chunkResult.complete) return;
           stopCamera();
-          await restorePayload(payload);
+          await restorePayload(chunkResult.payloadToRestore);
         } catch (err) {
           setStatus('スキャン中です...', false);
         }
@@ -10528,6 +10607,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     stopBtn.addEventListener('click', () => {
       stopCamera();
       setStatus('カメラを閉じました');
+    });
+    resetChunksBtn.addEventListener('click', () => {
+      resetChunkSession();
+      setStatus('分割QRの読取状態をリセットしました');
     });
     restoreBtn.addEventListener('click', () => restorePayload(payloadInput.value));
 
