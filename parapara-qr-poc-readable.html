@@ -182,8 +182,8 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     return function(a,b){var c=new n(a,l[b]);return c.addData.apply(c,Array.prototype.slice.call(arguments,2)),c}}();
 
     const MAX_PAYLOAD_BYTES = 2953;
-    const MAX_CHUNK_PAYLOAD_BYTES = 2900;
-    const MAX_MULTI_QR_CHUNKS = 12;
+    const MAX_CHUNK_PAYLOAD_BYTES = 1450;
+    const MAX_MULTI_QR_CHUNKS = 24;
     const SINGLE_QR_SIZE = 360;
     const CHUNK_QR_SIZE = 400;
     const DEFAULT_RECORD_DURATION_MS = 1000;
@@ -226,7 +226,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     let currentResultMode = 'single';
     let currentMimeType = '';
     let currentAudioBytesLength = 0;
-    let currentChunkLayout = 'compact';
+    let currentChunkLayout = 'readable';
     let currentPages = [];
     let currentPageIndex = 0;
 
@@ -336,7 +336,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
 
     function getPageGroups() {
       if (currentResultMode !== 'chunked') return [currentPayloads.slice(0, 1)];
-      const pageSize = currentChunkLayout === 'readable' ? 3 : 1;
+      const pageSize = currentChunkLayout === 'readable' ? 2 : 1;
       const pages = [];
       for (let i = 0; i < currentPayloads.length; i += pageSize) {
         pages.push(currentPayloads.slice(i, i + pageSize));
@@ -367,7 +367,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
             card.title = payload;
             const label = document.createElement('div');
             label.className = 'qr-label';
-            label.textContent = `QR ${currentPageIndex * 3 + offset + 1} / ${currentPayloads.length}`;
+            label.textContent = `QR ${currentPageIndex * 2 + offset + 1} / ${currentPayloads.length}`;
             const mount = document.createElement('div');
             drawQrInto(mount, payload, 220);
             card.appendChild(label);
@@ -426,7 +426,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         currentAudioBytesLength = audioBytes.length;
         currentChunkIndex = 0;
         currentPageIndex = 0;
-        currentChunkLayout = 'compact';
+        currentChunkLayout = 'readable';
 
         if (payload.length <= MAX_PAYLOAD_BYTES) {
           currentResultMode = 'single';
