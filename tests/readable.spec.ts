@@ -14,8 +14,8 @@ test('試作用HTMLで読み取り優先表示へ切り替えられる', async (
 
   await expect(page.locator('#chunkNav')).toBeVisible();
   await expect(page.locator('#meta')).toContainText('レイアウト: 読み取り優先');
-  await expect(page.locator('#meta')).toContainText('分割QR: 12 枚');
-  await expect(page.locator('#meta')).toContainText('表示中: 1 / 6 ページ');
+  await expect(page.locator('#meta')).toContainText('分割QR: 16 枚');
+  await expect(page.locator('#meta')).toContainText('表示中: 1 / 8 ページ');
   await expect(page.locator('.qr-card')).toHaveCount(2);
-  await expect(page.locator('.qr-label').first()).toContainText('QR 1 / 12');
+  await expect(page.locator('.qr-label').first()).toContainText('QR 1 / 16');
 });

@@ -48,7 +48,7 @@ test('QR生成（分割QR）', async ({ page }) => {
   await expect(page.locator('#chunkNav')).toBeVisible();
   await expect(page.getByRole('button', { name: '▶ テスト再生' })).toBeDisabled();
   await expect(page.locator('#meta')).toContainText('分割QR');
-  await expect(page.locator('#meta')).toContainText('分割QR: 6 枚');
+  await expect(page.locator('#meta')).toContainText('分割QR: 8 枚');
 
   const first = await page.locator('#qrContainer').getAttribute('title');
   expect(first.startsWith(CHUNK_PREFIX)).toBeTruthy();
