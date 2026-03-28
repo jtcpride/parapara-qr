@@ -10434,10 +10434,16 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         };
       }
 
-      chunkSession.chunks[parsed.index - 1] = parsed.chunk;
+      const slot = parsed.index - 1;
+      const alreadyHadChunk = chunkSession.chunks[slot] === parsed.chunk;
+      chunkSession.chunks[slot] = parsed.chunk;
       resetChunksBtn.classList.remove('hidden');
 
       const filled = chunkSession.chunks.filter(Boolean).length;
+      if (alreadyHadChunk && filled < chunkSession.total) {
+        setStatus(`分割QRを読み取り中です (${filled}/${chunkSession.total}) - QR ${parsed.index} は取得済みです`);
+        return { complete: false, duplicate: true };
+      }
       if (filled < chunkSession.total) {
         setStatus(`分割QRを読み取り中です (${filled}/${chunkSession.total})`);
         return { complete: false };
