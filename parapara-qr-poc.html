@@ -63,6 +63,28 @@
       border-radius: 8px;
       margin: 6px auto;
       width: fit-content;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    #qrContainer.multi {
+      width: 100%;
+      max-width: 100%;
+    }
+    .qr-page {
+      display: grid;
+      gap: 14px;
+      justify-items: center;
+    }
+    .qr-card {
+      display: grid;
+      gap: 8px;
+      justify-items: center;
+      width: 100%;
+    }
+    .qr-label {
+      font-size: .9rem;
+      color: #334155;
+      font-weight: 700;
     }
     #meta {
       margin: 12px 0;
@@ -118,9 +140,10 @@
       <div id="meta"></div>
       <div class="stack">
         <button class="main-btn" id="testPlayBtn">▶ テスト再生</button>
+        <button class="secondary hidden" id="layoutToggleBtn">読み取り優先で表示</button>
         <div class="stack hidden" id="chunkNav">
-          <button class="secondary" id="prevChunkBtn">← 前のQR</button>
-          <button class="secondary" id="nextChunkBtn">次のQR →</button>
+          <button class="secondary" id="prevChunkBtn">← 前のページ</button>
+          <button class="secondary" id="nextChunkBtn">次のページ →</button>
         </div>
         <button class="secondary" id="printBtn">🖨 印刷</button>
         <button class="secondary" id="retryBtn">← やり直し</button>
@@ -186,6 +209,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     const qrContainer = document.getElementById('qrContainer');
     const meta = document.getElementById('meta');
     const testPlayBtn = document.getElementById('testPlayBtn');
+    const layoutToggleBtn = document.getElementById('layoutToggleBtn');
     const chunkNav = document.getElementById('chunkNav');
     const prevChunkBtn = document.getElementById('prevChunkBtn');
     const nextChunkBtn = document.getElementById('nextChunkBtn');
@@ -202,6 +226,9 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     let currentResultMode = 'single';
     let currentMimeType = '';
     let currentAudioBytesLength = 0;
+    let currentChunkLayout = 'compact';
+    let currentPages = [];
+    let currentPageIndex = 0;
 
     const show = (section) => {
       [homeScreen, recordScreen, resultScreen, errorScreen].forEach((el) => el.classList.add('hidden'));
@@ -283,19 +310,19 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       }
     }
 
-    function drawQr(payload, size = SINGLE_QR_SIZE) {
-      qrContainer.innerHTML = '';
+    function drawQrInto(target, payload, size = SINGLE_QR_SIZE) {
       if (typeof QRCode === 'undefined') {
         throw new Error('QRCode library unavailable');
       }
-      const qr = new QRCode(qrContainer, {
+      const qr = new QRCode(target, {
         text: payload,
         width: size,
         height: size,
         correctLevel: QRCode.CorrectLevel.L
       });
-      const canvas = qrContainer.querySelector('canvas');
-      const img = qrContainer.querySelector('img');
+      target.title = payload;
+      const canvas = target.querySelector('canvas');
+      const img = target.querySelector('img');
       if (img) {
         img.alt = 'QRコード';
         img.style.display = 'none';
@@ -307,22 +334,62 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       return { typeNumber: 'auto' };
     }
 
+    function getPageGroups() {
+      if (currentResultMode !== 'chunked') return [currentPayloads.slice(0, 1)];
+      const pageSize = currentChunkLayout === 'readable' ? 3 : 1;
+      const pages = [];
+      for (let i = 0; i < currentPayloads.length; i += pageSize) {
+        pages.push(currentPayloads.slice(i, i + pageSize));
+      }
+      return pages;
+    }
+
     function showError(msg) {
       errorMessage.textContent = msg;
       show(errorScreen);
     }
 
     function updateResultUi() {
-      const payload = currentPayloads[currentChunkIndex];
+      qrContainer.innerHTML = '';
+      currentPages = getPageGroups();
+      currentPageIndex = Math.min(currentPageIndex, Math.max(0, currentPages.length - 1));
+      const pagePayloads = currentPages[currentPageIndex] || [];
       let qr;
       try {
-        qr = drawQr(payload, currentResultMode === 'chunked' ? CHUNK_QR_SIZE : SINGLE_QR_SIZE);
+        if (pagePayloads.length > 1) {
+          qrContainer.classList.add('multi');
+          qrContainer.title = pagePayloads[0];
+          const page = document.createElement('div');
+          page.className = 'qr-page';
+          pagePayloads.forEach((payload, offset) => {
+            const card = document.createElement('div');
+            card.className = 'qr-card';
+            card.title = payload;
+            const label = document.createElement('div');
+            label.className = 'qr-label';
+            label.textContent = `QR ${currentPageIndex * 3 + offset + 1} / ${currentPayloads.length}`;
+            const mount = document.createElement('div');
+            drawQrInto(mount, payload, 220);
+            card.appendChild(label);
+            card.appendChild(mount);
+            page.appendChild(card);
+          });
+          qrContainer.appendChild(page);
+          qr = { typeNumber: 'auto' };
+          currentPayload = pagePayloads[0];
+        } else {
+          qrContainer.classList.remove('multi');
+          qrContainer.title = pagePayloads[0];
+          const mount = document.createElement('div');
+          qrContainer.appendChild(mount);
+          qr = drawQrInto(mount, pagePayloads[0], currentResultMode === 'chunked' ? CHUNK_QR_SIZE : SINGLE_QR_SIZE);
+          currentPayload = pagePayloads[0];
+        }
       } catch (err) {
         showError(`QR化に失敗しました: ${err?.message || err}`);
         return;
       }
 
-      currentPayload = payload;
       playbackFrame.classList.add('hidden');
       playbackFrame.removeAttribute('src');
 
@@ -330,18 +397,21 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       const lines = [
         `データ: ${currentAudioBytesLength.toLocaleString()} B`,
         `QR Version: ${qr.typeNumber} (L)`,
-        `ペイロード: ${payload.length.toLocaleString()} B`
+        `ペイロード: ${pagePayloads.reduce((sum, payload) => sum + payload.length, 0).toLocaleString()} B`
       ];
       if (isChunked) {
         lines.push(`分割QR: ${currentPayloads.length} 枚`);
-        lines.push(`表示中: ${currentChunkIndex + 1} / ${currentPayloads.length}`);
+        lines.push(`表示中: ${currentPageIndex + 1} / ${currentPages.length} ページ`);
+        lines.push(`レイアウト: ${currentChunkLayout === 'readable' ? '読み取り優先' : '枚数優先'}`);
         lines.push(`形式: ${currentMimeType}`);
       }
       meta.innerHTML = lines.join('<br>');
 
       chunkNav.classList.toggle('hidden', !isChunked);
-      prevChunkBtn.disabled = !isChunked || currentChunkIndex === 0;
-      nextChunkBtn.disabled = !isChunked || currentChunkIndex === currentPayloads.length - 1;
+      layoutToggleBtn.classList.toggle('hidden', !isChunked);
+      layoutToggleBtn.textContent = currentChunkLayout === 'readable' ? '枚数優先で表示' : '読み取り優先で表示';
+      prevChunkBtn.disabled = !isChunked || currentPageIndex === 0;
+      nextChunkBtn.disabled = !isChunked || currentPageIndex === currentPages.length - 1;
       testPlayBtn.disabled = isChunked;
       resultStatus.textContent = isChunked
         ? '複数QRモードです。各QRを順に読み取って復元してください。'
@@ -355,6 +425,8 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         currentMimeType = mimeType;
         currentAudioBytesLength = audioBytes.length;
         currentChunkIndex = 0;
+        currentPageIndex = 0;
+        currentChunkLayout = 'compact';
 
         if (payload.length <= MAX_PAYLOAD_BYTES) {
           currentResultMode = 'single';
@@ -507,14 +579,20 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     cancelRecordBtn.addEventListener('click', () => show(homeScreen));
     retryBtn.addEventListener('click', () => show(homeScreen));
     errorRetryBtn.addEventListener('click', () => show(homeScreen));
+    layoutToggleBtn.addEventListener('click', () => {
+      if (currentResultMode !== 'chunked') return;
+      currentChunkLayout = currentChunkLayout === 'readable' ? 'compact' : 'readable';
+      currentPageIndex = 0;
+      updateResultUi();
+    });
     prevChunkBtn.addEventListener('click', () => {
-      if (currentChunkIndex <= 0) return;
-      currentChunkIndex -= 1;
+      if (currentPageIndex <= 0) return;
+      currentPageIndex -= 1;
       updateResultUi();
     });
     nextChunkBtn.addEventListener('click', () => {
-      if (currentChunkIndex >= currentPayloads.length - 1) return;
-      currentChunkIndex += 1;
+      if (currentPageIndex >= currentPages.length - 1) return;
+      currentPageIndex += 1;
       updateResultUi();
     });
 

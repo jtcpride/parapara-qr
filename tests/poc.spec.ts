@@ -53,10 +53,24 @@ test('QR生成（分割QR）', async ({ page }) => {
   const first = await page.locator('#qrContainer').getAttribute('title');
   expect(first.startsWith(CHUNK_PREFIX)).toBeTruthy();
 
-  await page.getByRole('button', { name: '次のQR →' }).click();
+  await page.locator('#nextChunkBtn').click();
   const second = await page.locator('#qrContainer').getAttribute('title');
   expect(second.startsWith(CHUNK_PREFIX)).toBeTruthy();
   expect(second).not.toEqual(first);
+});
+
+test('読み取り優先モードでは1ページに複数QRを並べる', async ({ page }) => {
+  await page.setInputFiles('#fileInput', {
+    name: 'chunked.m4a',
+    mimeType: 'audio/mp4',
+    buffer: Buffer.alloc(12795, 0x61),
+  });
+
+  await page.getByRole('button', { name: '読み取り優先で表示' }).click();
+  await expect(page.locator('#meta')).toContainText('レイアウト: 読み取り優先');
+  await expect(page.locator('#meta')).toContainText('表示中: 1 / 2 ページ');
+  await expect(page.locator('.qr-card')).toHaveCount(3);
+  await expect(page.locator('.qr-label').first()).toContainText('QR 1 / 6');
 });
 
 test('QR生成（モック録音）', async ({ page }) => {

@@ -65,6 +65,7 @@ What is implemented:
 
 - The encoder can fall back from a single self-contained QR to multiple `PQR1` chunk QR codes.
 - The result UI can step through chunked QR codes one by one.
+- The encoder branch `codex/readability-mode` also has a reading-priority layout that groups up to three lighter QR codes on one page.
 - The decoder can accept `PQR1` chunk payloads, keep progress, and reconstruct the original media once all chunks are present.
 - Tests now cover both single-QR and multi-QR round trips on desktop.
 
