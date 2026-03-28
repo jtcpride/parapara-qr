@@ -5,7 +5,7 @@ import { test, expect } from '@playwright/test';
 const decoderPath = pathToFileURL(path.resolve(__dirname, '..', 'parapara-qr-decoder.html')).href;
 const entryPath = pathToFileURL(path.resolve(__dirname, '..', 'index.html')).href;
 const CHUNK_PREFIX = 'PQR1';
-const MAX_CHUNK_PAYLOAD_BYTES = 2200;
+const MAX_CHUNK_PAYLOAD_BYTES = 2900;
 
 function buildWavBytes() {
   const sampleRate = 8000;

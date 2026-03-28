@@ -159,8 +159,10 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     return function(a,b){var c=new n(a,l[b]);return c.addData.apply(c,Array.prototype.slice.call(arguments,2)),c}}();
 
     const MAX_PAYLOAD_BYTES = 2953;
-    const MAX_CHUNK_PAYLOAD_BYTES = 2200;
+    const MAX_CHUNK_PAYLOAD_BYTES = 2900;
     const MAX_MULTI_QR_CHUNKS = 12;
+    const SINGLE_QR_SIZE = 360;
+    const CHUNK_QR_SIZE = 400;
     const DEFAULT_RECORD_DURATION_MS = 1000;
     const FALLBACK_RECORD_DURATION_MS = 350;
     const APPLE_RECORD_DURATION_MS = 250;
@@ -281,15 +283,15 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       }
     }
 
-    function drawQr(payload) {
+    function drawQr(payload, size = SINGLE_QR_SIZE) {
       qrContainer.innerHTML = '';
       if (typeof QRCode === 'undefined') {
         throw new Error('QRCode library unavailable');
       }
       const qr = new QRCode(qrContainer, {
         text: payload,
-        width: 360,
-        height: 360,
+        width: size,
+        height: size,
         correctLevel: QRCode.CorrectLevel.L
       });
       const canvas = qrContainer.querySelector('canvas');
@@ -314,7 +316,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       const payload = currentPayloads[currentChunkIndex];
       let qr;
       try {
-        qr = drawQr(payload);
+        qr = drawQr(payload, currentResultMode === 'chunked' ? CHUNK_QR_SIZE : SINGLE_QR_SIZE);
       } catch (err) {
         showError(`QR化に失敗しました: ${err?.message || err}`);
         return;
