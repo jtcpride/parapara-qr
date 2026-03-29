@@ -1,5 +1,7 @@
 # Announcement Draft
 
+エイプリルフール向けの複数パターンは [APRIL_FOOLS_LAUNCH.md](APRIL_FOOLS_LAUNCH.md) にまとめてある。
+
 あなたの、絶対に残したい1秒はなんですか？
 
 パラパラQR という試作を公開しました。
