@@ -7,6 +7,42 @@ import { PNG } from 'pngjs';
 const htmlPath = pathToFileURL(path.resolve(__dirname, '..', 'parapara-qr-poc.html')).href;
 const CHUNK_PREFIX = 'PQR1:';
 
+function buildStereoSpeechLikeWav() {
+  const sampleRate = 16000;
+  const silenceFrames = Math.floor(sampleRate * 0.08);
+  const voiceFrames = Math.floor(sampleRate * 0.12);
+  const totalFrames = silenceFrames * 2 + voiceFrames;
+  const channelCount = 2;
+  const bitsPerSample = 16;
+  const blockAlign = channelCount * (bitsPerSample / 8);
+  const buffer = Buffer.alloc(44 + totalFrames * blockAlign);
+
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(36 + totalFrames * blockAlign, 4);
+  buffer.write('WAVE', 8);
+  buffer.write('fmt ', 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(channelCount, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * blockAlign, 28);
+  buffer.writeUInt16LE(blockAlign, 32);
+  buffer.writeUInt16LE(bitsPerSample, 34);
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(totalFrames * blockAlign, 40);
+
+  for (let frame = 0; frame < totalFrames; frame += 1) {
+    const inVoice = frame >= silenceFrames && frame < silenceFrames + voiceFrames;
+    const t = (frame - silenceFrames) / sampleRate;
+    const left = inVoice ? Math.sin(2 * Math.PI * 440 * t) * 0.2 : 0;
+    const right = inVoice ? Math.sin(2 * Math.PI * 660 * t) * 0.18 : 0;
+    buffer.writeInt16LE(Math.round(left * 0x7fff), 44 + frame * blockAlign);
+    buffer.writeInt16LE(Math.round(right * 0x7fff), 44 + frame * blockAlign + 2);
+  }
+
+  return buffer;
+}
+
 function decodeQrFromPng(buffer: Buffer): string {
   const png = PNG.sync.read(buffer);
   const decoded = jsQR(new Uint8ClampedArray(png.data), png.width, png.height);
@@ -124,4 +160,35 @@ test('サイズ超過ガード', async ({ page }) => {
     name: 'big.webm', mimeType: 'audio/webm', buffer: Buffer.alloc(30000, 7),
   });
   await expect(page.locator('#errorMessage')).toContainText('ファイルが大きすぎます');
+});
+
+test('研究版の WAV 軽量化で QR 枚数を減らせる', async ({ page }) => {
+  const source = buildStereoSpeechLikeWav();
+
+  await page.setInputFiles('#fileInput', {
+    name: 'voice.wav',
+    mimeType: 'audio/wav',
+    buffer: source,
+  });
+  await expect(page.locator('#meta')).toContainText('分割QR');
+  const originalMeta = await page.locator('#meta').textContent();
+  const originalMatch = originalMeta?.match(/分割QR: (\d+) 枚/);
+  expect(originalMatch).not.toBeNull();
+  const originalCount = Number(originalMatch?.[1]);
+
+  await page.getByRole('button', { name: '← やり直し' }).click();
+  await page.selectOption('#compressionMode', 'wav-voice');
+  await page.setInputFiles('#fileInput', {
+    name: 'voice.wav',
+    mimeType: 'audio/wav',
+    buffer: source,
+  });
+
+  await expect(page.locator('#meta')).toContainText('前処理: WAV軽量化を適用');
+  await expect(page.locator('#meta')).toContainText('QR比較:');
+
+  const optimizedMeta = await page.locator('#meta').textContent();
+  const optimizedChunkMatch = optimizedMeta?.match(/分割QR: (\d+) 枚/);
+  const optimizedCount = optimizedChunkMatch ? Number(optimizedChunkMatch[1]) : 1;
+  expect(optimizedCount).toBeLessThan(originalCount);
 });
