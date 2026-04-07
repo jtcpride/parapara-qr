@@ -334,6 +334,121 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       return { typeNumber: 'auto' };
     }
 
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function buildPrintQrImage(payload, size) {
+      const mount = document.createElement('div');
+      mount.style.position = 'fixed';
+      mount.style.left = '-99999px';
+      mount.style.top = '0';
+      mount.style.pointerEvents = 'none';
+      mount.style.background = '#fff';
+      document.body.appendChild(mount);
+      try {
+        drawQrInto(mount, payload, size);
+        const canvas = mount.querySelector('canvas');
+        if (canvas) {
+          return canvas.toDataURL('image/png');
+        }
+        const img = mount.querySelector('img');
+        if (img?.src) {
+          return img.src;
+        }
+        const svg = mount.querySelector('svg');
+        if (svg) {
+          return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg.outerHTML)}`;
+        }
+        throw new Error('QR画像を作成できませんでした');
+      } finally {
+        mount.remove();
+      }
+    }
+
+    function buildPrintDocumentHtml(items) {
+      const cards = items.map((item) => `
+        <figure class="print-card${items.length === 1 ? ' single' : ''}">
+          <img class="print-qr" src="${item.src}" alt="${escapeHtml(item.label)}" />
+          <figcaption>${escapeHtml(item.label)}</figcaption>
+        </figure>
+      `).join('');
+      const title = currentResultMode === 'chunked'
+        ? `パラパラQR 音声チャンク (${currentPayloads.length} QR)`
+        : 'パラパラQR';
+      const metaText = `形式: ${currentMimeType || 'audio'} / データ: ${currentAudioBytesLength.toLocaleString()} B / レイアウト: ${currentChunkLayout === 'readable' ? '読み取り優先' : '枚数優先'}`;
+
+      return `<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    @page { size: A4 portrait; margin: 12mm; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #111;
+      background: #fff;
+    }
+    header { margin-bottom: 8mm; }
+    h1 { margin: 0 0 4mm; font-size: 18pt; }
+    p { margin: 0; font-size: 10pt; color: #334155; }
+    .print-grid {
+      display: grid;
+      grid-template-columns: ${items.length === 1 ? '1fr' : 'repeat(2, minmax(0, 1fr))'};
+      gap: 8mm;
+      align-items: start;
+    }
+    .print-card {
+      margin: 0;
+      padding: 4mm;
+      border: 1px solid #cbd5e1;
+      border-radius: 4mm;
+      break-inside: avoid;
+      text-align: center;
+    }
+    .print-card.single {
+      border: 0;
+      padding: 0;
+    }
+    .print-qr {
+      width: 100%;
+      max-width: ${items.length === 1 ? '140mm' : '78mm'};
+      display: block;
+      margin: 0 auto;
+      image-rendering: pixelated;
+    }
+    figcaption {
+      margin-top: 3mm;
+      font-size: 10pt;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>${escapeHtml(title)}</h1>
+    <p>${escapeHtml(metaText)}</p>
+  </header>
+  <main class="print-grid">${cards}</main>
+  <script>
+    window.addEventListener('load', () => {
+      setTimeout(() => window.print(), 150);
+    });
+    window.addEventListener('afterprint', () => {
+      window.close();
+    });
+  <\/script>
+</body>
+</html>`;
+    }
+
     function getPageGroups() {
       if (currentResultMode !== 'chunked') return [currentPayloads.slice(0, 1)];
       const pageSize = currentChunkLayout === 'readable' ? 2 : 1;
@@ -604,9 +719,23 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     });
 
     printBtn.addEventListener('click', () => {
-      resultScreen.classList.add('printing');
-      window.print();
-      setTimeout(() => resultScreen.classList.remove('printing'), 100);
+      try {
+        const items = currentPayloads.map((payload, index) => ({
+          label: `QR ${index + 1} / ${currentPayloads.length}`,
+          src: buildPrintQrImage(payload, currentResultMode === 'single' ? 720 : 320),
+        }));
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+          throw new Error('印刷ウィンドウを開けませんでした');
+        }
+        const html = buildPrintDocumentHtml(items);
+        printWindow.document.open();
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.focus();
+      } catch (err) {
+        showError(`印刷プレビューの生成に失敗しました: ${err?.message || err}`);
+      }
     });
   </script>
 </body>

@@ -119,6 +119,35 @@ test('テスト再生ボタン', async ({ page }) => {
   expect(src?.startsWith('data:text/html;base64,')).toBeTruthy();
 });
 
+test('印刷プレビュー用HTMLを生成できる', async ({ page }) => {
+  await page.evaluate(() => {
+    window.__printHtml = '';
+    window.open = () => {
+      const stub = {
+        document: {
+          open() {},
+          write(html) { window.__printHtml += html; },
+          close() {},
+        },
+        focus() {},
+      };
+      return stub;
+    };
+  });
+
+  await page.setInputFiles('#fileInput', {
+    name: 'chunked.m4a',
+    mimeType: 'audio/mp4',
+    buffer: Buffer.alloc(12795, 0x61),
+  });
+  await page.getByRole('button', { name: '🖨 印刷' }).click();
+
+  const html = await page.evaluate(() => window.__printHtml);
+  expect(html).toContain('パラパラQR 音声チャンク');
+  expect(html.match(/class="print-qr"/g)?.length).toBe(8);
+  expect(html).toContain('QR 1 / 8');
+});
+
 test('サイズ超過ガード', async ({ page }) => {
   await page.setInputFiles('#fileInput', {
     name: 'big.webm', mimeType: 'audio/webm', buffer: Buffer.alloc(30000, 7),

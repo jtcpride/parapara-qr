@@ -19,3 +19,33 @@ test('試作用HTMLで読み取り優先表示へ切り替えられる', async (
   await expect(page.locator('.qr-card')).toHaveCount(2);
   await expect(page.locator('.qr-label').first()).toContainText('QR 1 / 16');
 });
+
+test('試作用HTMLで全QRをまとめた印刷プレビューHTMLを生成できる', async ({ page }) => {
+  await page.goto(readablePath);
+  await page.evaluate(() => {
+    window.__printHtml = '';
+    window.open = () => {
+      const stub = {
+        document: {
+          open() {},
+          write(html) { window.__printHtml += html; },
+          close() {},
+        },
+        focus() {},
+      };
+      return stub;
+    };
+  });
+
+  await page.setInputFiles('#fileInput', {
+    name: 'chunked.m4a',
+    mimeType: 'audio/mp4',
+    buffer: Buffer.alloc(12795, 0x61),
+  });
+  await page.getByRole('button', { name: '🖨 印刷' }).click();
+
+  const html = await page.evaluate(() => window.__printHtml);
+  expect(html).toContain('パラパラQR 音声チャンク');
+  expect(html.match(/class="print-qr"/g)?.length).toBe(16);
+  expect(html).toContain('QR 16 / 16');
+});
