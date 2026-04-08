@@ -53,3 +53,29 @@
 - まだ迷うなら一旦ライセンス未定のまま進める
 
 という順番を取る。
+
+## ライセンス未掲載で公開する場合の文面
+
+README やリポジトリ説明で、少なくとも次のことは明記しておくとよい。
+
+```text
+このリポジトリは試作品の公開であり、現時点では LICENSE を付けていません。
+再利用、改変、配布、商用利用などの条件は、今後あらためて定めます。
+現段階では、内容の参照や検証を目的とした公開として扱ってください。
+```
+
+もう少し短く書くなら、次でもよい。
+
+```text
+License status: not yet decided.
+This repository is published as a public prototype and record of the work.
+Reuse terms will be defined separately.
+```
+
+## README に足すなら
+
+短い注記として入れるなら、次の一文が扱いやすい。
+
+```text
+このリポジトリは試作品の公開であり、現時点ではライセンス条件をまだ確定していない。
+```

@@ -1,5 +1,8 @@
 # Announcement Draft
 
+このファイルは長文の公開案内用。
+X 投稿向けのコピペ文は [X_POSTING_PLAN.md](X_POSTING_PLAN.md) を使う。
+
 あなたの、絶対に残したい1秒はなんですか？
 
 パラパラQR という試作を公開しました。
