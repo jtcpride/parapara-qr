@@ -169,6 +169,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     const RECORD_BITS_PER_SECOND = 8000;
     const MIME_FALLBACK = 'audio/octet-stream';
     const CHUNK_PREFIX = 'PQR1';
+    const DECODER_URL = 'https://jtcpride.github.io/parapara-qr/parapara-qr-decoder.html';
 
     const homeScreen = document.getElementById('homeScreen');
     const recordScreen = document.getElementById('recordScreen');
@@ -349,7 +350,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       }
     }
 
-    function buildPrintDocumentHtml(items) {
+    function buildPrintDocumentHtml(items, decoderQrSrc) {
       const cards = items.map((item) => `
         <figure class="print-card${items.length === 1 ? ' single' : ''}">
           <img class="print-qr" src="${item.src}" alt="${escapeHtml(item.label)}" />
@@ -374,9 +375,40 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       color: #111;
       background: #fff;
     }
-    header { margin-bottom: 8mm; }
+    header {
+      margin-bottom: 8mm;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 6mm;
+      align-items: start;
+    }
     h1 { margin: 0 0 4mm; font-size: 18pt; }
     p { margin: 0; font-size: 10pt; color: #334155; }
+    .decoder-card {
+      width: 34mm;
+      text-align: center;
+      break-inside: avoid;
+    }
+    .decoder-qr {
+      width: 100%;
+      display: block;
+      border: 1px solid #cbd5e1;
+      border-radius: 3mm;
+      background: #fff;
+    }
+    .decoder-label {
+      margin-top: 2mm;
+      font-size: 8.5pt;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+    .decoder-url {
+      margin-top: 1.5mm;
+      font-size: 6.5pt;
+      line-height: 1.3;
+      color: #475569;
+      word-break: break-all;
+    }
     .print-grid {
       display: grid;
       grid-template-columns: ${items.length === 1 ? '1fr' : 'repeat(2, minmax(0, 1fr))'};
@@ -411,8 +443,15 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
 </head>
 <body>
   <header>
-    <h1>${escapeHtml(title)}</h1>
-    <p>${escapeHtml(metaText)}</p>
+    <div>
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(metaText)}</p>
+    </div>
+    <aside class="decoder-card">
+      <img class="decoder-qr" src="${decoderQrSrc}" alt="decoder QR" />
+      <div class="decoder-label">まずこちらを読む<br />decoder</div>
+      <div class="decoder-url">${escapeHtml(DECODER_URL)}</div>
+    </aside>
   </header>
   <main class="print-grid">${cards}</main>
   <script>
@@ -647,6 +686,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
 
     printBtn.addEventListener('click', () => {
       try {
+        const decoderQrSrc = buildPrintQrImage(DECODER_URL, 220);
         const items = currentPayloads.map((payload, index) => ({
           label: currentResultMode === 'single' ? 'QR 1 / 1' : `QR ${index + 1} / ${currentPayloads.length}`,
           src: buildPrintQrImage(payload, currentResultMode === 'single' ? 720 : 320),
@@ -655,7 +695,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         if (!printWindow) {
           throw new Error('印刷ウィンドウを開けませんでした');
         }
-        const html = buildPrintDocumentHtml(items);
+        const html = buildPrintDocumentHtml(items, decoderQrSrc);
         printWindow.document.open();
         printWindow.document.write(html);
         printWindow.document.close();

@@ -146,6 +146,8 @@ test('印刷プレビュー用HTMLを生成できる', async ({ page }) => {
   expect(html).toContain('パラパラQR 音声チャンク');
   expect(html.match(/class="print-qr"/g)?.length).toBe(8);
   expect(html).toContain('QR 1 / 8');
+  expect(html).toContain('decoder-qr');
+  expect(html).toContain('parapara-qr-decoder.html');
 });
 
 test('サイズ超過ガード', async ({ page }) => {
