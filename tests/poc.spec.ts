@@ -51,7 +51,7 @@ test('QR生成（分割QR）', async ({ page }) => {
   await expect(page.getByRole('button', { name: '▶ テスト再生' })).toBeDisabled();
   await expect(page.locator('#meta')).toContainText('分割QR');
   await expect(page.locator('#meta')).toContainText('分割QR: 5 枚');
-  await expect(page.locator('#meta')).toContainText('chunk codec: binary-chunk');
+  await expect(page.locator('#meta')).toContainText('選択形式: PQ4 raw binary');
 
   const firstDecoded = decodeQrFromPng(await page.locator('#qrContainer canvas').screenshot());
   expect(firstDecoded.binaryData?.slice(0, 3)).toEqual(BINARY_MAGIC);

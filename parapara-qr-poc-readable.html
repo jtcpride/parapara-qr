@@ -244,6 +244,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     let currentResultMode = 'single';
     let currentMimeType = '';
     let currentAudioBytesLength = 0;
+    let currentSelectedFormat = '';
     let currentChunkLayout = 'readable';
     let currentPages = [];
     let currentPageIndex = 0;
@@ -747,6 +748,26 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
 </html>`;
     }
 
+    function formatLabel(format) {
+      switch (format) {
+        case 'single':
+        case 'compact-single':
+          return 'PQS1 compact single';
+        case 'legacy-html':
+          return 'legacy single HTML';
+        case 'compact-chunk-base64':
+          return 'PQR2 compact + Base64';
+        case 'compact-chunk-base91':
+          return 'PQR3 compact + Base91';
+        case 'binary-chunk':
+          return 'PQ4 raw binary';
+        case 'legacy':
+          return 'PQR1 legacy chunk';
+        default:
+          return format || '-';
+      }
+    }
+
     function getPageGroups() {
       if (currentResultMode !== 'chunked') return [currentPayloads.slice(0, 1)];
       const pageSize = currentChunkLayout === 'readable' ? 2 : 1;
@@ -812,12 +833,12 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         `QR Version: ${qr.typeNumber} (L)`,
         `ペイロード: ${pagePayloads.reduce((sum, entry) => sum + getPayloadLength(entry), 0).toLocaleString()} B`
       ];
+      lines.push(`選択形式: ${formatLabel(currentSelectedFormat || pagePayloads[0]?.format)}`);
       if (isChunked) {
         lines.push(`分割QR: ${currentPayloads.length} 枚`);
         lines.push(`表示中: ${currentPageIndex + 1} / ${currentPages.length} ページ`);
         lines.push(`レイアウト: ${currentChunkLayout === 'readable' ? '読み取り優先' : '枚数優先'}`);
         lines.push(`形式: ${currentMimeType}`);
-        lines.push(`chunk codec: ${pagePayloads[0]?.format || '-'}`);
       }
       meta.innerHTML = lines.join('<br>');
 
@@ -844,6 +865,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
 
         if (payload.length <= MAX_PAYLOAD_BYTES) {
           currentResultMode = 'single';
+          currentSelectedFormat = 'single';
           currentPayloads = [wrapPayloadEntry(payload, 'single')];
           updateResultUi();
           return;
@@ -862,6 +884,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
               )
             : chunkPayloads;
         currentResultMode = 'chunked';
+        currentSelectedFormat = selectedChunkPayloads.format;
         currentPayloads = selectedChunkPayloads.payloads.map((item) => wrapPayloadEntry(item, selectedChunkPayloads.format));
         updateResultUi();
       } catch (err) {

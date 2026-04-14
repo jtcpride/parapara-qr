@@ -220,6 +220,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     let currentResultMode = 'single';
     let currentMimeType = '';
     let currentAudioBytesLength = 0;
+    let currentSelectedFormat = '';
 
     const show = (section) => {
       [homeScreen, recordScreen, resultScreen, errorScreen].forEach((el) => el.classList.add('hidden'));
@@ -581,6 +582,26 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         .replace(/'/g, '&#39;');
     }
 
+    function formatLabel(format) {
+      switch (format) {
+        case 'single':
+        case 'compact-single':
+          return 'PQS1 compact single';
+        case 'legacy-html':
+          return 'legacy single HTML';
+        case 'compact-chunk-base64':
+          return 'PQR2 compact + Base64';
+        case 'compact-chunk-base91':
+          return 'PQR3 compact + Base91';
+        case 'binary-chunk':
+          return 'PQ4 raw binary';
+        case 'legacy':
+          return 'PQR1 legacy chunk';
+        default:
+          return format || '-';
+      }
+    }
+
     function buildPrintQrImage(payload, size) {
       const mount = document.createElement('div');
       mount.style.position = 'fixed';
@@ -752,11 +773,11 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         `QR Version: ${qr.typeNumber} (L)`,
         `ペイロード: ${getPayloadLength(payloadEntry).toLocaleString()} B`
       ];
+      lines.push(`選択形式: ${formatLabel(currentSelectedFormat || payloadEntry.format)}`);
       if (isChunked) {
         lines.push(`分割QR: ${currentPayloads.length} 枚`);
         lines.push(`表示中: ${currentChunkIndex + 1} / ${currentPayloads.length}`);
         lines.push(`形式: ${currentMimeType}`);
-        lines.push(`chunk codec: ${payloadEntry.format}`);
       }
       meta.innerHTML = lines.join('<br>');
 
@@ -779,6 +800,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
 
         if (payload.length <= MAX_PAYLOAD_BYTES) {
           currentResultMode = 'single';
+          currentSelectedFormat = 'single';
           currentPayloads = [wrapPayloadEntry(payload, 'single')];
           updateResultUi();
           return;
@@ -797,6 +819,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
               )
             : chunkPayloads;
         currentResultMode = 'chunked';
+        currentSelectedFormat = selectedChunkPayloads.format;
         currentPayloads = selectedChunkPayloads.payloads.map((item) => wrapPayloadEntry(item, selectedChunkPayloads.format));
         updateResultUi();
       } catch (err) {
