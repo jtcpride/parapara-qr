@@ -5,13 +5,15 @@ import jsQR from 'jsqr';
 import { PNG } from 'pngjs';
 
 const htmlPath = pathToFileURL(path.resolve(__dirname, '..', 'parapara-qr-poc.html')).href;
-const CHUNK_PREFIX = 'PQR1:';
+const CHUNK_PREFIXES = ['PQR2', 'PQR3'];
+const SINGLE_PREFIX = 'PQS1';
+const BINARY_MAGIC = [0x50, 0x51, 0x34];
 
-function decodeQrFromPng(buffer: Buffer): string {
+function decodeQrFromPng(buffer: Buffer) {
   const png = PNG.sync.read(buffer);
   const decoded = jsQR(new Uint8ClampedArray(png.data), png.width, png.height);
   if (!decoded) throw new Error('QR decode failed');
-  return decoded.data;
+  return decoded;
 }
 
 test.beforeEach(async ({ page }) => {
@@ -35,7 +37,7 @@ test('QR生成（ファイル入力）', async ({ page }) => {
 
   const png = await canvas.screenshot();
   const decoded = decodeQrFromPng(png);
-  expect(decoded.startsWith('data:text/html;base64,')).toBeTruthy();
+  expect(decoded.data.startsWith(SINGLE_PREFIX)).toBeTruthy();
 });
 
 test('QR生成（分割QR）', async ({ page }) => {
@@ -48,15 +50,16 @@ test('QR生成（分割QR）', async ({ page }) => {
   await expect(page.locator('#chunkNav')).toBeVisible();
   await expect(page.getByRole('button', { name: '▶ テスト再生' })).toBeDisabled();
   await expect(page.locator('#meta')).toContainText('分割QR');
-  await expect(page.locator('#meta')).toContainText('分割QR: 8 枚');
+  await expect(page.locator('#meta')).toContainText('分割QR: 5 枚');
+  await expect(page.locator('#meta')).toContainText('chunk codec: binary-chunk');
 
-  const first = await page.locator('#qrContainer').getAttribute('title');
-  expect(first.startsWith(CHUNK_PREFIX)).toBeTruthy();
+  const firstDecoded = decodeQrFromPng(await page.locator('#qrContainer canvas').screenshot());
+  expect(firstDecoded.binaryData?.slice(0, 3)).toEqual(BINARY_MAGIC);
 
   await page.getByRole('button', { name: '次のQR →' }).click();
-  const second = await page.locator('#qrContainer').getAttribute('title');
-  expect(second.startsWith(CHUNK_PREFIX)).toBeTruthy();
-  expect(second).not.toEqual(first);
+  const secondDecoded = decodeQrFromPng(await page.locator('#qrContainer canvas').screenshot());
+  expect(secondDecoded.binaryData?.slice(0, 3)).toEqual(BINARY_MAGIC);
+  expect(secondDecoded.binaryData).not.toEqual(firstDecoded.binaryData);
 });
 
 test('QR生成（モック録音）', async ({ page }) => {
@@ -88,7 +91,7 @@ test('QR生成（モック録音）', async ({ page }) => {
   await expect(canvas).toBeVisible();
 
   const decoded = decodeQrFromPng(await canvas.screenshot());
-  expect(decoded.startsWith('data:text/html;base64,')).toBeTruthy();
+  expect(decoded.data.startsWith(SINGLE_PREFIX)).toBeTruthy();
 });
 
 test('ラウンドトリップ', async ({ page }) => {
@@ -99,12 +102,16 @@ test('ラウンドトリップ', async ({ page }) => {
     buffer: sample,
   });
 
-  const payload = decodeQrFromPng(await page.locator('#qrContainer canvas').screenshot());
-  const outer = payload.replace('data:text/html;base64,', '');
-  const html = Buffer.from(outer, 'base64').toString('utf8');
-  const m = html.match(/base64,([^"]+)/);
-  expect(m).not.toBeNull();
-  const audio = Buffer.from(m![1], 'base64');
+  const payload = decodeQrFromPng(await page.locator('#qrContainer canvas').screenshot()).data;
+  const audio = payload.startsWith(SINGLE_PREFIX)
+    ? Buffer.from(payload.slice(SINGLE_PREFIX.length + 1), 'base64')
+    : (() => {
+        const outer = payload.replace('data:text/html;base64,', '');
+        const html = Buffer.from(outer, 'base64').toString('utf8');
+        const m = html.match(/base64,([^"]+)/);
+        expect(m).not.toBeNull();
+        return Buffer.from(m![1], 'base64');
+      })();
   expect(audio.equals(sample)).toBeTruthy();
 });
 
@@ -144,8 +151,8 @@ test('印刷プレビュー用HTMLを生成できる', async ({ page }) => {
 
   const html = await page.evaluate(() => window.__printHtml);
   expect(html).toContain('パラパラQR 音声チャンク');
-  expect(html.match(/class="print-qr"/g)?.length).toBe(8);
-  expect(html).toContain('QR 1 / 8');
+  expect(html.match(/class="print-qr"/g)?.length).toBe(5);
+  expect(html).toContain('QR 1 / 5');
   expect(html).toContain('decoder-qr');
   expect(html).toContain('parapara-qr-decoder.html');
 });

@@ -10241,7 +10241,45 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     let chunkSession = null;
     const scanCanvas = document.createElement('canvas');
     const scanContext = scanCanvas.getContext('2d', { willReadFrequently: true });
-    const CHUNK_PREFIX = 'PQR1';
+    /*
+      Supported payload families:
+
+      - Legacy single:
+        data:text/html;base64,...
+      - Compact single:
+        PQS1<mime-code><base64>
+      - Legacy chunk:
+        PQR1:index:total:mime:chunk
+      - Compact chunk + Base64:
+        PQR2<mime-code><total-base36><index-base36><chunk>
+      - Compact chunk + Base91:
+        PQR3<mime-code><total-base36><index-base36><chunk>
+      - Raw binary chunk:
+        Bytes 0-2: "PQ4"
+        Byte 3:    chunk index
+        Byte 4:    chunk total
+        Byte 5:    mime length
+        Bytes 6+:  mime ascii + raw media bytes
+
+      Mainstream/default encoder policy:
+      - single QR prefers PQS1 when shorter
+      - multi QR prefers the fewest chunks among PQR2 / PQR3 / PQ4
+    */
+    const LEGACY_HTML_PREFIX = 'data:text/html;base64,';
+    const COMPACT_SINGLE_PREFIX = 'PQS1';
+    const CHUNK_PREFIX = 'PQR2';
+    const CHUNK_BASE91_PREFIX = 'PQR3';
+    const BINARY_CHUNK_MAGIC = Object.freeze([0x50, 0x51, 0x34]); // "PQ4"
+    const LEGACY_CHUNK_PREFIX = 'PQR1';
+    const BASE91_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~"';
+    const MIME_CODE_REVERSE_MAP = Object.freeze({
+      w: 'audio/webm',
+      m: 'audio/mp4',
+      a: 'audio/wav',
+      o: 'audio/ogg',
+      3: 'audio/mpeg',
+      b: 'audio/octet-stream'
+    });
 
     function setStatus(text, isError = false) {
       statusEl.textContent = text;
@@ -10276,6 +10314,70 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     function resetChunkSession() {
       chunkSession = null;
       resetChunksBtn.classList.add('hidden');
+    }
+
+    function decodeMimeCode(code) {
+      return MIME_CODE_REVERSE_MAP[code] || '';
+    }
+
+    function isCompactSinglePayload(payload) {
+      return payload.startsWith(COMPACT_SINGLE_PREFIX);
+    }
+
+    function buildCompactSinglePayload(mimeType, base64) {
+      const mimeCode = Object.entries(MIME_CODE_REVERSE_MAP).find(([, value]) => value === mimeType)?.[0];
+      if (!mimeCode) return '';
+      return `${COMPACT_SINGLE_PREFIX}${mimeCode}${base64}`;
+    }
+
+    function bytesToBase64(uint8) {
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < uint8.length; i += chunk) {
+        binary += String.fromCharCode(...uint8.subarray(i, i + chunk));
+      }
+      return btoa(binary);
+    }
+
+    function bytesToAscii(uint8) {
+      let output = '';
+      for (let i = 0; i < uint8.length; i += 1) {
+        output += String.fromCharCode(uint8[i]);
+      }
+      return output;
+    }
+
+    function base91ToBytes(text) {
+      const decodeMap = Object.create(null);
+      for (let index = 0; index < BASE91_ALPHABET.length; index += 1) {
+        decodeMap[BASE91_ALPHABET[index]] = index;
+      }
+      let value = -1;
+      let queue = 0;
+      let bits = 0;
+      const output = [];
+      for (const char of text) {
+        if (!(char in decodeMap)) {
+          throw new Error('base91 payload に未対応文字が含まれています');
+        }
+        if (value < 0) {
+          value = decodeMap[char];
+          continue;
+        }
+        value += decodeMap[char] * 91;
+        queue |= value << bits;
+        bits += (value & 8191) > 88 ? 13 : 14;
+        while (bits >= 8) {
+          output.push(queue & 255);
+          queue >>= 8;
+          bits -= 8;
+        }
+        value = -1;
+      }
+      if (value >= 0) {
+        output.push((queue | (value << bits)) & 255);
+      }
+      return new Uint8Array(output);
     }
 
     function guessFileExtension(mimeType) {
@@ -10389,47 +10491,104 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     }
 
     function dataUrlToText(payload) {
-      const prefix = 'data:text/html;base64,';
-      if (!payload.startsWith(prefix)) {
+      if (!payload.startsWith(LEGACY_HTML_PREFIX)) {
         throw new Error('自己完結HTML payload ではありません');
       }
-      const outer = payload.slice(prefix.length);
+      const outer = payload.slice(LEGACY_HTML_PREFIX.length);
       const bytes = Uint8Array.from(atob(outer), (ch) => ch.charCodeAt(0));
       return new TextDecoder().decode(bytes);
     }
 
     function buildHtmlPayloadFromMedia(mimeType, base64) {
       const html = `<audio controls autoplay src="data:${mimeType};base64,${base64}"></audio>`;
-      return `data:text/html;base64,${btoa(unescape(encodeURIComponent(html)))}`;
+      return `${LEGACY_HTML_PREFIX}${btoa(unescape(encodeURIComponent(html)))}`;
+    }
+
+    function parseCompactSinglePayload(payload) {
+      if (!isCompactSinglePayload(payload)) return null;
+      const mimeType = decodeMimeCode(payload.slice(COMPACT_SINGLE_PREFIX.length, COMPACT_SINGLE_PREFIX.length + 1));
+      if (!mimeType) {
+        throw new Error('compact payload のMIMEコードが不正です');
+      }
+      const base64 = payload.slice(COMPACT_SINGLE_PREFIX.length + 1);
+      const mediaTag = mimeType.startsWith('video/') ? 'video' : 'audio';
+      return {
+        mimeType,
+        base64,
+        mediaTag,
+        mediaSrc: `data:${mimeType};base64,${base64}`,
+        payloadToRestore: buildHtmlPayloadFromMedia(mimeType, base64)
+      };
     }
 
     function parseChunkPayload(payload) {
-      if (!payload.startsWith(`${CHUNK_PREFIX}:`)) return null;
-      const first = payload.indexOf(':');
-      const second = payload.indexOf(':', first + 1);
-      const third = payload.indexOf(':', second + 1);
-      const fourth = payload.indexOf(':', third + 1);
-      if ([first, second, third, fourth].some((index) => index < 0)) {
-        throw new Error('分割QR payload の形式が不正です');
+      if (payload.startsWith(`${LEGACY_CHUNK_PREFIX}:`)) {
+        const first = payload.indexOf(':');
+        const second = payload.indexOf(':', first + 1);
+        const third = payload.indexOf(':', second + 1);
+        const fourth = payload.indexOf(':', third + 1);
+        if ([first, second, third, fourth].some((index) => index < 0)) {
+          throw new Error('分割QR payload の形式が不正です');
+        }
+        const index = Number(payload.slice(first + 1, second));
+        const total = Number(payload.slice(second + 1, third));
+        const mimeType = payload.slice(third + 1, fourth);
+        const chunk = payload.slice(fourth + 1);
+        if (!Number.isInteger(index) || !Number.isInteger(total) || index < 1 || total < 1 || index > total) {
+          throw new Error('分割QRの番号情報が不正です');
+        }
+        return { index, total, mimeType, chunk, format: 'legacy' };
       }
-      const index = Number(payload.slice(first + 1, second));
-      const total = Number(payload.slice(second + 1, third));
-      const mimeType = payload.slice(third + 1, fourth);
-      const chunk = payload.slice(fourth + 1);
+      const isBase64Chunk = payload.startsWith(CHUNK_PREFIX);
+      const isBase91Chunk = payload.startsWith(CHUNK_BASE91_PREFIX);
+      const prefix = isBase64Chunk ? CHUNK_PREFIX : (isBase91Chunk ? CHUNK_BASE91_PREFIX : '');
+      if (!prefix) return null;
+      if (payload.length < prefix.length + 5) {
+        throw new Error('compact chunk payload が短すぎます');
+      }
+      const mimeType = decodeMimeCode(payload.slice(prefix.length, prefix.length + 1));
+      const total = parseInt(payload.slice(prefix.length + 1, prefix.length + 3), 36);
+      const index = parseInt(payload.slice(prefix.length + 3, prefix.length + 5), 36);
+      const chunk = payload.slice(prefix.length + 5);
+      if (!mimeType) {
+        throw new Error('compact chunk payload のMIMEコードが不正です');
+      }
       if (!Number.isInteger(index) || !Number.isInteger(total) || index < 1 || total < 1 || index > total) {
         throw new Error('分割QRの番号情報が不正です');
       }
-      return { index, total, mimeType, chunk };
+      return { index, total, mimeType, chunk, format: isBase91Chunk ? 'compact-base91' : 'compact-base64' };
+    }
+
+    function parseBinaryChunk(uint8array) {
+      if (!(uint8array instanceof Uint8Array)) return null;
+      if (uint8array.length < 6) return null;
+      if (
+        uint8array[0] !== BINARY_CHUNK_MAGIC[0]
+        || uint8array[1] !== BINARY_CHUNK_MAGIC[1]
+        || uint8array[2] !== BINARY_CHUNK_MAGIC[2]
+      ) {
+        return null;
+      }
+      const index = uint8array[3];
+      const total = uint8array[4];
+      const mimeLength = uint8array[5];
+      if (!index || !total || index > total || uint8array.length < 6 + mimeLength) {
+        throw new Error('binary chunk header が不正です');
+      }
+      const mimeType = bytesToAscii(uint8array.slice(6, 6 + mimeLength));
+      const payload = uint8array.slice(6 + mimeLength);
+      return { index, total, mimeType, payload, format: 'binary-raw' };
     }
 
     function acceptChunkPayload(payload) {
       const parsed = parseChunkPayload(payload);
       if (!parsed) return null;
 
-      if (!chunkSession || chunkSession.total !== parsed.total || chunkSession.mimeType !== parsed.mimeType) {
+      if (!chunkSession || chunkSession.total !== parsed.total || chunkSession.mimeType !== parsed.mimeType || chunkSession.format !== parsed.format) {
         chunkSession = {
           total: parsed.total,
           mimeType: parsed.mimeType,
+          format: parsed.format,
           chunks: new Array(parsed.total).fill('')
         };
       }
@@ -10450,23 +10609,90 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       }
 
       const joined = chunkSession.chunks.join('');
-      const mediaSrc = `data:${chunkSession.mimeType};base64,${joined}`;
-      const payloadToRestore = buildHtmlPayloadFromMedia(chunkSession.mimeType, joined);
+      const base64 = chunkSession.format === 'compact-base91'
+        ? bytesToBase64(base91ToBytes(joined))
+        : joined;
+      const mediaSrc = `data:${chunkSession.mimeType};base64,${base64}`;
+      const payloadToRestore = buildCompactSinglePayload(chunkSession.mimeType, base64)
+        || buildHtmlPayloadFromMedia(chunkSession.mimeType, base64);
       resetChunkSession();
       return { complete: true, payloadToRestore, mediaSrc };
     }
 
+    function acceptBinaryChunk(parsed) {
+      if (!parsed) return null;
+      if (
+        !chunkSession
+        || chunkSession.total !== parsed.total
+        || chunkSession.mimeType !== parsed.mimeType
+        || chunkSession.format !== parsed.format
+      ) {
+        chunkSession = {
+          total: parsed.total,
+          mimeType: parsed.mimeType,
+          format: parsed.format,
+          chunks: new Array(parsed.total).fill(null)
+        };
+      }
+
+      const slot = parsed.index - 1;
+      const existing = chunkSession.chunks[slot];
+      const alreadyHadChunk = existing && existing.length === parsed.payload.length
+        && existing.every((value, index) => value === parsed.payload[index]);
+      chunkSession.chunks[slot] = parsed.payload;
+      resetChunksBtn.classList.remove('hidden');
+
+      const filled = chunkSession.chunks.filter(Boolean).length;
+      if (alreadyHadChunk && filled < chunkSession.total) {
+        setStatus(`分割QRを読み取り中です (${filled}/${chunkSession.total}) - QR ${parsed.index} は取得済みです`);
+        return { complete: false, duplicate: true };
+      }
+      if (filled < chunkSession.total) {
+        setStatus(`分割QRを読み取り中です (${filled}/${chunkSession.total})`);
+        return { complete: false };
+      }
+
+      const totalLength = chunkSession.chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      const combined = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunkSession.chunks) {
+        combined.set(chunk, offset);
+        offset += chunk.length;
+      }
+      const blob = new Blob([combined], { type: chunkSession.mimeType });
+      const mediaSrc = URL.createObjectURL(blob);
+      resetChunkSession();
+      return {
+        complete: true,
+        blob,
+        mediaSrc,
+        mimeType: parsed.mimeType,
+        mediaTag: parsed.mimeType.startsWith('video/') ? 'video' : 'audio',
+        binary: true
+      };
+    }
+
     function extractEmbeddedMedia(payload) {
+      const compact = parseCompactSinglePayload(payload);
+      if (compact) {
+        return {
+          html: dataUrlToText(compact.payloadToRestore),
+          mediaSrc: compact.mediaSrc,
+          mediaTag: compact.mediaTag,
+          previewPayload: compact.payloadToRestore
+        };
+      }
       const html = dataUrlToText(payload);
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const media = doc.querySelector('audio,video');
       if (!media) {
-        return { html, mediaSrc: '', mediaTag: '' };
+        return { html, mediaSrc: '', mediaTag: '', previewPayload: payload };
       }
       return {
         html,
         mediaSrc: media.getAttribute('src') || '',
-        mediaTag: media.tagName.toLowerCase()
+        mediaTag: media.tagName.toLowerCase(),
+        previewPayload: payload
       };
     }
 
@@ -10487,10 +10713,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       resetPreview();
 
       try {
-        const { mediaSrc, mediaTag } = extractEmbeddedMedia(sourcePayload);
-        lastPayload = sourcePayload;
+        const { mediaSrc, mediaTag, previewPayload } = extractEmbeddedMedia(sourcePayload);
+        lastPayload = previewPayload;
         payloadInput.value = trimmed;
-        previewFrame.src = sourcePayload;
+        previewFrame.src = previewPayload;
         previewFrame.classList.remove('hidden');
 
         if (mediaSrc) {
@@ -10518,6 +10744,37 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       }
     }
 
+    async function restoreBinaryResult(result) {
+      resetPreview();
+      if (!result?.mediaSrc) {
+        setStatus('binary chunk の復元結果が不正です', true);
+        return;
+      }
+      try {
+        const prepared = await prepareDownload(result.mediaSrc, result.mediaTag);
+        lastPayload = '';
+        payloadInput.value = '';
+        if (result.mediaTag === 'video') {
+          videoPlayer.src = lastDownloadUrl || result.mediaSrc;
+          videoPlayer.classList.remove('hidden');
+        } else {
+          audioPlayer.src = lastDownloadUrl || result.mediaSrc;
+          audioPlayer.classList.remove('hidden');
+          if (prepared?.blob) {
+            await prepareCompatibilityDownload(prepared.blob);
+          }
+        }
+        const autoDownloaded = tryAutoDownload();
+        setStatus(
+          autoDownloaded
+            ? 'binary chunk を復元し、ダウンロードを開始しました。'
+            : 'binary chunk を復元しました。必要なら再生またはダウンロードできます。'
+        );
+      } catch (err) {
+        setStatus(`binary chunk の復元に失敗しました: ${err.message || err}`, true);
+      }
+    }
+
     function stopCamera() {
       if (scanTimer) {
         clearInterval(scanTimer);
@@ -10533,29 +10790,49 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     }
 
     async function detectPayloadFromVideo() {
-      if (cameraView.readyState < 2) return '';
+      if (cameraView.readyState < 2) return null;
 
       if (detector) {
         const barcodes = await detector.detect(cameraView);
         const hit = barcodes.find((code) => typeof code.rawValue === 'string' && (
-          code.rawValue.startsWith('data:text/html;base64,') || code.rawValue.startsWith(`${CHUNK_PREFIX}:`)
+          code.rawValue.startsWith(LEGACY_HTML_PREFIX)
+          || code.rawValue.startsWith(COMPACT_SINGLE_PREFIX)
+          || code.rawValue.startsWith(CHUNK_PREFIX)
+          || code.rawValue.startsWith(CHUNK_BASE91_PREFIX)
+          || code.rawValue.startsWith(`${LEGACY_CHUNK_PREFIX}:`)
         ));
-        return hit?.rawValue || '';
+        return hit ? { kind: 'text', payload: hit.rawValue } : null;
       }
 
-      if (typeof jsQR !== 'function' || !scanContext) return '';
+      if (typeof jsQR !== 'function' || !scanContext) return null;
 
       const width = cameraView.videoWidth;
       const height = cameraView.videoHeight;
-      if (!width || !height) return '';
+      if (!width || !height) return null;
 
       scanCanvas.width = width;
       scanCanvas.height = height;
       scanContext.drawImage(cameraView, 0, 0, width, height);
       const image = scanContext.getImageData(0, 0, width, height);
       const code = jsQR(image.data, width, height, { inversionAttempts: 'attemptBoth' });
-      if (!code || typeof code.data !== 'string') return '';
-      return (code.data.startsWith('data:text/html;base64,') || code.data.startsWith(`${CHUNK_PREFIX}:`)) ? code.data : '';
+      if (!code) return null;
+      if (
+        Array.isArray(code.binaryData)
+        && code.binaryData.length >= 6
+        && code.binaryData[0] === BINARY_CHUNK_MAGIC[0]
+        && code.binaryData[1] === BINARY_CHUNK_MAGIC[1]
+        && code.binaryData[2] === BINARY_CHUNK_MAGIC[2]
+      ) {
+        return { kind: 'binary', payload: new Uint8Array(code.binaryData) };
+      }
+      if (typeof code.data !== 'string') return null;
+      return (
+        code.data.startsWith(LEGACY_HTML_PREFIX)
+        || code.data.startsWith(COMPACT_SINGLE_PREFIX)
+        || code.data.startsWith(CHUNK_PREFIX)
+        || code.data.startsWith(CHUNK_BASE91_PREFIX)
+        || code.data.startsWith(`${LEGACY_CHUNK_PREFIX}:`)
+      ) ? { kind: 'text', payload: code.data } : null;
     }
 
     async function startScan() {
@@ -10592,14 +10869,21 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         try {
           const payload = await detectPayloadFromVideo();
           if (!payload) return;
-          const parsedChunk = parseChunkPayload(payload);
-          if (!parsedChunk) {
+          if (payload.kind === 'binary') {
+            const chunkResult = acceptBinaryChunk(parseBinaryChunk(payload.payload));
+            if (!chunkResult || !chunkResult.complete) return;
             stopCamera();
-            await restorePayload(payload);
+            await restoreBinaryResult(chunkResult);
             return;
           }
-          payloadInput.value = payload;
-          const chunkResult = acceptChunkPayload(payload);
+          const parsedChunk = parseChunkPayload(payload.payload);
+          if (!parsedChunk) {
+            stopCamera();
+            await restorePayload(payload.payload);
+            return;
+          }
+          payloadInput.value = payload.payload;
+          const chunkResult = acceptChunkPayload(payload.payload);
           if (!chunkResult || !chunkResult.complete) return;
           stopCamera();
           await restorePayload(chunkResult.payloadToRestore);

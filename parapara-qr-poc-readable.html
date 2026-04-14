@@ -191,8 +191,25 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     const APPLE_RECORD_DURATION_MS = 250;
     const RECORD_BITS_PER_SECOND = 8000;
     const MIME_FALLBACK = 'audio/octet-stream';
-    const CHUNK_PREFIX = 'PQR1';
+    const LEGACY_HTML_PREFIX = 'data:text/html;base64,';
+    const COMPACT_SINGLE_PREFIX = 'PQS1';
+    const CHUNK_PREFIX = 'PQR2';
+    const CHUNK_BASE91_PREFIX = 'PQR3';
+    const BINARY_CHUNK_MAGIC = Object.freeze([0x50, 0x51, 0x34]); // "PQ4"
+    const LEGACY_CHUNK_PREFIX = 'PQR1';
     const DECODER_URL = 'https://jtcpride.github.io/parapara-qr/parapara-qr-decoder.html';
+    const BASE91_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~"';
+    const MIME_CODE_MAP = Object.freeze({
+      'audio/webm': 'w',
+      'audio/mp4': 'm',
+      'audio/wav': 'a',
+      'audio/ogg': 'o',
+      'audio/mpeg': '3',
+      'audio/octet-stream': 'b'
+    });
+    const MIME_CODE_REVERSE_MAP = Object.freeze(Object.fromEntries(
+      Object.entries(MIME_CODE_MAP).map(([mimeType, code]) => [code, mimeType])
+    ));
 
     const homeScreen = document.getElementById('homeScreen');
     const recordScreen = document.getElementById('recordScreen');
@@ -250,6 +267,72 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       return bytesToBase64(bytes);
     }
 
+    function bytesToBase91(uint8) {
+      let value = 0;
+      let bits = 0;
+      let output = '';
+      for (const byte of uint8) {
+        value |= byte << bits;
+        bits += 8;
+        if (bits > 13) {
+          let chunk = value & 8191;
+          if (chunk > 88) {
+            value >>= 13;
+            bits -= 13;
+          } else {
+            chunk = value & 16383;
+            value >>= 14;
+            bits -= 14;
+          }
+          output += BASE91_ALPHABET[chunk % 91] + BASE91_ALPHABET[Math.floor(chunk / 91)];
+        }
+      }
+      if (bits) {
+        output += BASE91_ALPHABET[value % 91];
+        if (bits > 7 || value > 90) {
+          output += BASE91_ALPHABET[Math.floor(value / 91)];
+        }
+      }
+      return output;
+    }
+
+    function bytesToAscii(uint8) {
+      let output = '';
+      for (let i = 0; i < uint8.length; i += 1) {
+        output += String.fromCharCode(uint8[i]);
+      }
+      return output;
+    }
+
+    function normalizeMimeType(mimeType) {
+      const normalized = String(mimeType || MIME_FALLBACK).split(';')[0].trim().toLowerCase();
+      return normalized || MIME_FALLBACK;
+    }
+
+    function encodeMimeCode(mimeType) {
+      return MIME_CODE_MAP[normalizeMimeType(mimeType)] || '';
+    }
+
+    function decodeMimeCode(code) {
+      return MIME_CODE_REVERSE_MAP[code] || '';
+    }
+
+    function toBase36Fixed(value, width) {
+      return value.toString(36).padStart(width, '0');
+    }
+
+    function buildLegacyHtmlPayload(audioB64, mimeType) {
+      const html = `<audio controls autoplay src="data:${mimeType};base64,${audioB64}"></audio>`;
+      const outerB64 = utf8ToBase64(html);
+      return `${LEGACY_HTML_PREFIX}${outerB64}`;
+    }
+
+    function buildCompactSinglePayload(audioB64, mimeType) {
+      const mimeCode = encodeMimeCode(mimeType);
+      if (!mimeCode) return null;
+      return `${COMPACT_SINGLE_PREFIX}${mimeCode}${audioB64}`;
+    }
+
     function inferMime(file, isRecording) {
       if (isRecording) return 'audio/webm';
       return file?.type && file.type.trim() ? file.type : MIME_FALLBACK;
@@ -278,31 +361,63 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     }
 
     function buildPayload(audioBytes, mimeType) {
+      const normalizedMimeType = normalizeMimeType(mimeType);
       const audioB64 = bytesToBase64(audioBytes);
-      const html = `<audio controls autoplay src="data:${mimeType};base64,${audioB64}"></audio>`;
-      const outerB64 = utf8ToBase64(html);
-      const payload = `data:text/html;base64,${outerB64}`;
-      return { payload, audioB64, html };
+      const legacyPayload = buildLegacyHtmlPayload(audioB64, normalizedMimeType);
+      const compactPayload = buildCompactSinglePayload(audioB64, normalizedMimeType);
+      const payload = compactPayload && compactPayload.length < legacyPayload.length
+        ? compactPayload
+        : legacyPayload;
+      return {
+        payload,
+        audioB64,
+        format: payload === compactPayload ? 'compact-single' : 'legacy-html',
+        stats: {
+          legacySingleLength: legacyPayload.length,
+          compactSingleLength: compactPayload ? compactPayload.length : null
+        }
+      };
     }
 
-    function buildChunkHeader(index, total, mimeType) {
-      return `${CHUNK_PREFIX}:${index}:${total}:${mimeType}:`;
+    function buildChunkHeader(index, total, mimeType, prefix = CHUNK_PREFIX) {
+      const mimeCode = encodeMimeCode(mimeType);
+      if (!mimeCode) {
+        return `${LEGACY_CHUNK_PREFIX}:${index}:${total}:${mimeType}:`;
+      }
+      return `${prefix}${mimeCode}${toBase36Fixed(total, 2)}${toBase36Fixed(index, 2)}`;
     }
 
-    function buildChunkPayloads(audioB64, mimeType) {
+    function buildBinaryChunkHeader(index, total, mimeType) {
+      const mimeBytes = new TextEncoder().encode(normalizeMimeType(mimeType));
+      const header = new Uint8Array(6 + mimeBytes.length);
+      header[0] = BINARY_CHUNK_MAGIC[0];
+      header[1] = BINARY_CHUNK_MAGIC[1];
+      header[2] = BINARY_CHUNK_MAGIC[2];
+      header[3] = index;
+      header[4] = total;
+      header[5] = mimeBytes.length;
+      header.set(mimeBytes, 6);
+      return header;
+    }
+
+    function buildChunkPayloadsForEncoding(encoded, mimeType, prefix) {
+      const normalizedMimeType = normalizeMimeType(mimeType);
       let total = 1;
       while (true) {
-        const headerLength = buildChunkHeader(total, total, mimeType).length;
+        const headerLength = buildChunkHeader(total, total, normalizedMimeType, prefix).length;
         const chunkSize = MAX_CHUNK_PAYLOAD_BYTES - headerLength;
         if (chunkSize <= 0) throw new Error('chunk size unavailable');
-        const nextTotal = Math.ceil(audioB64.length / chunkSize);
+        const nextTotal = Math.ceil(encoded.length / chunkSize);
         if (nextTotal === total) {
           const payloads = [];
           for (let index = 1, start = 0; index <= total; index += 1, start += chunkSize) {
-            const chunk = audioB64.slice(start, start + chunkSize);
-            payloads.push(`${buildChunkHeader(index, total, mimeType)}${chunk}`);
+            const chunk = encoded.slice(start, start + chunkSize);
+            payloads.push(`${buildChunkHeader(index, total, normalizedMimeType, prefix)}${chunk}`);
           }
-          return payloads;
+          return {
+            payloads,
+            format: prefix === CHUNK_BASE91_PREFIX ? 'compact-chunk-base91' : 'compact-chunk-base64'
+          };
         }
         total = nextTotal;
         if (total > MAX_MULTI_QR_CHUNKS) {
@@ -311,7 +426,151 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       }
     }
 
+    function buildChunkPayloads(audioBytes, mimeType) {
+      const normalizedMimeType = normalizeMimeType(mimeType);
+      if (!encodeMimeCode(normalizedMimeType)) {
+        const audioB64 = bytesToBase64(audioBytes);
+        return buildChunkPayloadsForEncoding(audioB64, normalizedMimeType, LEGACY_CHUNK_PREFIX);
+      }
+      const audioB64 = bytesToBase64(audioBytes);
+      const audioB91 = bytesToBase91(audioBytes);
+      const base64Payloads = buildChunkPayloadsForEncoding(audioB64, normalizedMimeType, CHUNK_PREFIX);
+      const base91Payloads = buildChunkPayloadsForEncoding(audioB91, normalizedMimeType, CHUNK_BASE91_PREFIX);
+      if (base91Payloads.payloads.length < base64Payloads.payloads.length) {
+        return base91Payloads;
+      }
+      if (base91Payloads.payloads.length === base64Payloads.payloads.length) {
+        const base91Chars = base91Payloads.payloads.reduce((sum, payload) => sum + payload.length, 0);
+        const base64Chars = base64Payloads.payloads.reduce((sum, payload) => sum + payload.length, 0);
+        if (base91Chars < base64Chars) {
+          return base91Payloads;
+        }
+      }
+      return base64Payloads;
+    }
+
+    function buildBinaryChunkPayloads(audioBytes, mimeType) {
+      const normalizedMimeType = normalizeMimeType(mimeType);
+      const mimeBytes = new TextEncoder().encode(normalizedMimeType);
+      const headerLength = 6 + mimeBytes.length;
+      // The bundled QRCode wrapper overestimates byte-mode strings by 3 bytes.
+      const maxChunkSize = Math.max(1, (MAX_PAYLOAD_BYTES - 3) - headerLength);
+      const total = Math.ceil(audioBytes.length / maxChunkSize);
+      if (total > 255) {
+        throw new Error(`binary chunks exceed limit (${total})`);
+      }
+      const payloads = [];
+      for (let index = 1, start = 0; index <= total; index += 1, start += maxChunkSize) {
+        const chunk = audioBytes.slice(start, start + maxChunkSize);
+        const header = buildBinaryChunkHeader(index, total, normalizedMimeType);
+        const payload = new Uint8Array(header.length + chunk.length);
+        payload.set(header, 0);
+        payload.set(chunk, header.length);
+        payloads.push(payload);
+      }
+      return {
+        payloads,
+        format: 'binary-chunk'
+      };
+    }
+
+    function wrapPayloadEntry(payload, format) {
+      if (typeof payload === 'string') {
+        return {
+          kind: 'text',
+          format,
+          payload,
+          title: payload
+        };
+      }
+      const mimeLength = payload[5] || 0;
+      const mimeType = bytesToAscii(payload.slice(6, 6 + mimeLength));
+      const index = payload[3];
+      const total = payload[4];
+      return {
+        kind: 'binary',
+        format,
+        payload,
+        title: `PQ4:${index}/${total}:${mimeType}:${payload.length}B`
+      };
+    }
+
+    function getPayloadLength(entry) {
+      return entry.kind === 'binary' ? entry.payload.length : entry.payload.length;
+    }
+
+    function payloadToPreviewSrc(payload) {
+      if (payload.startsWith(LEGACY_HTML_PREFIX)) {
+        return payload;
+      }
+      if (payload.startsWith(COMPACT_SINGLE_PREFIX)) {
+        const mimeType = decodeMimeCode(payload.slice(COMPACT_SINGLE_PREFIX.length, COMPACT_SINGLE_PREFIX.length + 1));
+        if (!mimeType) {
+          throw new Error('未対応の compact payload です');
+        }
+        return buildLegacyHtmlPayload(payload.slice(COMPACT_SINGLE_PREFIX.length + 1), mimeType);
+      }
+      throw new Error('プレビューできない payload です');
+    }
+
+    function addBinaryData(qrInstance, uint8array) {
+      qrInstance.dataList.push({
+        mode: 4,
+        getLength: function() { return uint8array.length; },
+        write: function(buffer) {
+          for (let i = 0; i < uint8array.length; i += 1) {
+            buffer.put(uint8array[i], 8);
+          }
+        }
+      });
+      qrInstance.dataCache = null;
+    }
+
+    function renderBinaryQrToCanvas(target, uint8array, size = SINGLE_QR_SIZE) {
+      if (typeof QRCode === 'undefined') {
+        throw new Error('binary QR renderer unavailable');
+      }
+      target.innerHTML = '';
+      const placeholder = 'A'.repeat(uint8array.length);
+      const qrView = new QRCode(target, {
+        text: placeholder,
+        width: size,
+        height: size,
+        correctLevel: QRCode.CorrectLevel.L
+      });
+      const qr = qrView._oQRCode;
+      qr.dataList = [];
+      qr.dataCache = null;
+      addBinaryData(qr, uint8array);
+      qr.make();
+      const moduleCount = qr.getModuleCount();
+      const quietZone = 4;
+      const cellSize = Math.max(2, Math.ceil(size / moduleCount));
+      const actualSize = (moduleCount + quietZone * 2) * cellSize;
+      const canvas = document.createElement('canvas');
+      canvas.width = actualSize;
+      canvas.height = actualSize;
+      canvas.setAttribute('aria-label', 'QRコード');
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, actualSize, actualSize);
+      ctx.fillStyle = '#000000';
+      for (let row = 0; row < moduleCount; row += 1) {
+        for (let col = 0; col < moduleCount; col += 1) {
+          if (!qr.isDark(row, col)) continue;
+          ctx.fillRect((col + quietZone) * cellSize, (row + quietZone) * cellSize, cellSize, cellSize);
+        }
+      }
+      target.innerHTML = '';
+      target.appendChild(canvas);
+      target.title = `binary:${uint8array.length}`;
+      return { typeNumber: qr.typeNumber };
+    }
+
     function drawQrInto(target, payload, size = SINGLE_QR_SIZE) {
+      if (payload instanceof Uint8Array) {
+        return renderBinaryQrToCanvas(target, payload, size);
+      }
       if (typeof QRCode === 'undefined') {
         throw new Error('QRCode library unavailable');
       }
@@ -512,32 +771,32 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       try {
         if (pagePayloads.length > 1) {
           qrContainer.classList.add('multi');
-          qrContainer.title = pagePayloads[0];
+          qrContainer.title = pagePayloads[0].title;
           const page = document.createElement('div');
           page.className = 'qr-page';
-          pagePayloads.forEach((payload, offset) => {
+          pagePayloads.forEach((entry, offset) => {
             const card = document.createElement('div');
             card.className = 'qr-card';
-            card.title = payload;
+            card.title = entry.title;
             const label = document.createElement('div');
             label.className = 'qr-label';
             label.textContent = `QR ${currentPageIndex * 2 + offset + 1} / ${currentPayloads.length}`;
             const mount = document.createElement('div');
-            drawQrInto(mount, payload, 220);
+            drawQrInto(mount, entry.payload, 220);
             card.appendChild(label);
             card.appendChild(mount);
             page.appendChild(card);
           });
           qrContainer.appendChild(page);
           qr = { typeNumber: 'auto' };
-          currentPayload = pagePayloads[0];
+          currentPayload = pagePayloads[0].kind === 'text' ? pagePayloads[0].payload : '';
         } else {
           qrContainer.classList.remove('multi');
-          qrContainer.title = pagePayloads[0];
+          qrContainer.title = pagePayloads[0].title;
           const mount = document.createElement('div');
           qrContainer.appendChild(mount);
-          qr = drawQrInto(mount, pagePayloads[0], currentResultMode === 'chunked' ? CHUNK_QR_SIZE : SINGLE_QR_SIZE);
-          currentPayload = pagePayloads[0];
+          qr = drawQrInto(mount, pagePayloads[0].payload, currentResultMode === 'chunked' ? CHUNK_QR_SIZE : SINGLE_QR_SIZE);
+          currentPayload = pagePayloads[0].kind === 'text' ? pagePayloads[0].payload : '';
         }
       } catch (err) {
         showError(`QR化に失敗しました: ${err?.message || err}`);
@@ -551,13 +810,14 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
       const lines = [
         `データ: ${currentAudioBytesLength.toLocaleString()} B`,
         `QR Version: ${qr.typeNumber} (L)`,
-        `ペイロード: ${pagePayloads.reduce((sum, payload) => sum + payload.length, 0).toLocaleString()} B`
+        `ペイロード: ${pagePayloads.reduce((sum, entry) => sum + getPayloadLength(entry), 0).toLocaleString()} B`
       ];
       if (isChunked) {
         lines.push(`分割QR: ${currentPayloads.length} 枚`);
         lines.push(`表示中: ${currentPageIndex + 1} / ${currentPages.length} ページ`);
         lines.push(`レイアウト: ${currentChunkLayout === 'readable' ? '読み取り優先' : '枚数優先'}`);
         lines.push(`形式: ${currentMimeType}`);
+        lines.push(`chunk codec: ${pagePayloads[0]?.format || '-'}`);
       }
       meta.innerHTML = lines.join('<br>');
 
@@ -575,8 +835,8 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
 
     async function processAudioBytes(audioBytes, mimeType) {
       try {
-        const { payload, audioB64 } = buildPayload(audioBytes, mimeType);
-        currentMimeType = mimeType;
+        const { payload } = buildPayload(audioBytes, mimeType);
+        currentMimeType = normalizeMimeType(mimeType);
         currentAudioBytesLength = audioBytes.length;
         currentChunkIndex = 0;
         currentPageIndex = 0;
@@ -584,14 +844,25 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
 
         if (payload.length <= MAX_PAYLOAD_BYTES) {
           currentResultMode = 'single';
-          currentPayloads = [payload];
+          currentPayloads = [wrapPayloadEntry(payload, 'single')];
           updateResultUi();
           return;
         }
 
-        const chunkPayloads = buildChunkPayloads(audioB64, mimeType);
+        const chunkPayloads = buildChunkPayloads(audioBytes, currentMimeType);
+        const binaryChunkPayloads = buildBinaryChunkPayloads(audioBytes, currentMimeType);
+        const selectedChunkPayloads = binaryChunkPayloads.payloads.length < chunkPayloads.payloads.length
+          ? binaryChunkPayloads
+          : binaryChunkPayloads.payloads.length === chunkPayloads.payloads.length
+            ? (
+                binaryChunkPayloads.payloads.reduce((sum, item) => sum + item.length, 0)
+                < chunkPayloads.payloads.reduce((sum, item) => sum + item.length, 0)
+                  ? binaryChunkPayloads
+                  : chunkPayloads
+              )
+            : chunkPayloads;
         currentResultMode = 'chunked';
-        currentPayloads = chunkPayloads;
+        currentPayloads = selectedChunkPayloads.payloads.map((item) => wrapPayloadEntry(item, selectedChunkPayloads.format));
         updateResultUi();
       } catch (err) {
         showError(`ファイルが大きすぎます（${audioBytes.length} bytes / 単一QR上限 約1,600 bytes、分割時エラー: ${err?.message || err}）`);
@@ -752,7 +1023,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
 
     testPlayBtn.addEventListener('click', () => {
       if (!currentPayload || currentResultMode !== 'single') return;
-      playbackFrame.src = currentPayload;
+      playbackFrame.src = payloadToPreviewSrc(currentPayload);
       playbackFrame.classList.remove('hidden');
       resultStatus.textContent = 'テスト再生を表示しました';
     });
@@ -760,9 +1031,9 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     printBtn.addEventListener('click', () => {
       try {
         const decoderQrSrc = buildPrintQrImage(DECODER_URL, 220);
-        const items = currentPayloads.map((payload, index) => ({
+        const items = currentPayloads.map((entry, index) => ({
           label: `QR ${index + 1} / ${currentPayloads.length}`,
-          src: buildPrintQrImage(payload, currentResultMode === 'single' ? 720 : 320),
+          src: buildPrintQrImage(entry.payload, currentResultMode === 'single' ? 720 : 320),
         }));
         const printWindow = window.open('', '_blank');
         if (!printWindow) {
