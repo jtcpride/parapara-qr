@@ -20,7 +20,7 @@ Phase 1 is intentionally narrow:
 - No CDN or other external runtime dependency.
 - No server communication.
 - Encoder only.
-- QR payload format is `data:text/html;base64,...`.
+- QR payload format started as `data:text/html;base64,...` and now also supports compact `PQS1`.
 - Audio is embedded inside the HTML as `data:audio/...;base64,...`.
 - Expected validation path is browser "test playback" plus Playwright round-trip tests.
 
@@ -63,10 +63,17 @@ We have now started the multi-QR phase on top of the Phase 1 milestone.
 
 What is implemented:
 
-- The encoder can fall back from a single self-contained QR to multiple `PQR1` chunk QR codes.
+- The encoder can fall back from a single self-contained QR to multiple chunk QR codes.
 - The result UI can step through chunked QR codes one by one.
-- The decoder can accept `PQR1` chunk payloads, keep progress, and reconstruct the original media once all chunks are present.
+- The decoder can accept `PQR1`, `PQR2`, `PQR3`, and `PQ4` chunk payloads, keep progress, and reconstruct the original media once all chunks are present.
 - Tests now cover both single-QR and multi-QR round trips on desktop.
+
+Current mainstream/default policy:
+
+- Single QR uses `PQS1` when it is shorter than legacy self-contained HTML.
+- Multi QR compares `PQR2`, `PQR3`, and `PQ4`.
+- The default decision rule is count-first, then shorter total payload.
+- In practice, `PQ4` raw binary is often the default winner for chunked mode.
 
 Current intent:
 
